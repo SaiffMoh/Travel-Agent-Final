@@ -10,8 +10,8 @@ class TravelSearchState(TypedDict, total=False):
     # Flight search
     # -------------------------
     departure_date: Optional[str]
-    return_date: Optional[str]  # if known
-    duration: Optional[int]     # if round trip, to calculate return_date
+    return_date: Optional[str]  
+    duration: Optional[int]     
     origin: Optional[str]
     destination: Optional[str]
     cabin_class: Optional[str]
@@ -19,7 +19,6 @@ class TravelSearchState(TypedDict, total=False):
 
     # Normalized for Amadeus API
     origin_location_code: Optional[str]
-    destination_location_code: Optional[str]
     normalized_departure_date: Optional[str]
     normalized_return_date: Optional[str]
     normalized_cabin: Optional[str]
@@ -31,10 +30,9 @@ class TravelSearchState(TypedDict, total=False):
     # -------------------------
     # Hotel search
     # -------------------------
-    city_code: Optional[str]  # usually destination_location_code
     hotel_ids: Optional[List[str]]
-    checkin_date: Optional[str]   # from departure_date
-    checkout_date: Optional[str]  # from departure_date + duration
+    checkin_date: Optional[List[str]]   # from departure_date
+    checkout_date: Optional[List[str]]  # from departure_date + duration
     currency: Optional[str]
     room_quantity: Optional[int]
     adult: Optional[int]
@@ -49,4 +47,5 @@ class TravelSearchState(TypedDict, total=False):
     body: Optional[Dict[str, Any]]
     access_token: Optional[str]
     package_summary: Optional[str]
+    destination_location_code: Optional[str]
 
