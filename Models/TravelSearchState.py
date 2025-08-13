@@ -37,6 +37,9 @@ class TravelSearchState(TypedDict, total=False):
     currency: Optional[str]
     room_quantity: Optional[int]
     adult: Optional[int]
+    flight_offers_by_date: Dict[str, List[Dict]]
+    hotel_offers_by_dates: Dict[str, List[Dict]]
+    travel_packages: List[Dict]
 
     # Hotel results
     hotels_by_city: Optional[List[Dict[str, Any]]]  # API 2 output
