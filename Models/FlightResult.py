@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union, TypedDict
 from datetime import datetime
-from Models import FlightLeg
+from Models.FlightLeg import FlightLeg
 class FlightResult(BaseModel):
     price: str = Field(..., description="Flight price")
     currency: str = Field(..., description="Price currency")
