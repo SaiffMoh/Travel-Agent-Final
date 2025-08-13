@@ -1,8 +1,7 @@
-from datetime import datetime
-from ..Models import FlightSearchState
-from ..Utils import _debug_print
+from datetime import datetime, date
+from ..Models import TravelSearchState
 
-def analyze_conversation_node(state: FlightSearchState) -> FlightSearchState:
+def analyze_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """Validate the information extracted by the LLM conversation node."""
     try:
         (state.setdefault("node_trace", [])).append("analyze_conversation")
@@ -32,12 +31,6 @@ def analyze_conversation_node(state: FlightSearchState) -> FlightSearchState:
         state["info_complete"] = True
         state["needs_followup"] = False
         state["followup_question"] = None
-
-    _debug_print("Info completeness check", {
-        "missing_fields": missing_fields,
-        "info_complete": state["info_complete"],
-        "current_state": {k: state.get(k) for k in required_fields}
-    })
 
     state["current_node"] = "analyze_conversation"
     return state

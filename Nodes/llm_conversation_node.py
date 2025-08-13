@@ -1,11 +1,11 @@
 import json
 import os
-from ..Models import FlightSearchState
+from ..Models import TravelSearchState
 from langchain.schema import HumanMessage
-from ..Utils import get_llm, _debug_print
+from ..Utils.getLLM import get_llm
 from Prompts.InputExtraction import build_input_extraction_prompt
 
-def llm_conversation_node(state: FlightSearchState) -> FlightSearchState:
+def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """LLM-driven conversational node that intelligently handles all user input parsing and follow-up questions."""
     try:
         (state.setdefault("node_trace", [])).append("llm_conversation")
@@ -39,7 +39,6 @@ def llm_conversation_node(state: FlightSearchState) -> FlightSearchState:
             state["needs_followup"] = llm_result.get("needs_followup", True)
             state["info_complete"] = llm_result.get("info_complete", False)
 
-            _debug_print("LLM extraction result", llm_result)
         except json.JSONDecodeError:
             print(f"LLM response parsing error. Raw response: {response.content}")
             state["followup_question"] = "I had trouble understanding. Could you please tell me your departure city, destination, and preferred travel date?"

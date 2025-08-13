@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta
-from ..Models import FlightSearchState
-from ..Utils import _debug_print
+from ..Models import TravelSearchState
 
-def format_body_node(state: FlightSearchState) -> FlightSearchState:
+def format_body_node(state: TravelSearchState) -> TravelSearchState:
     """Format the request body for Amadeus API"""
     try:
         (state.setdefault("node_trace", [])).append("format_body")
@@ -56,6 +55,5 @@ def format_body_node(state: FlightSearchState) -> FlightSearchState:
         duration=state.get("duration")
     )
 
-    _debug_print("Amadeus request body", state.get("body"))
     state["current_node"] = "format_body"
     return state

@@ -1,10 +1,10 @@
 import os
 import re
-from ..Models import FlightSearchState
+from ..Models import TravelSearchState
 from langchain.schema import HumanMessage
-from ..Utils import get_llm, _debug_print
+from ..Utils.getLLM import get_llm
 
-def normalize_info_node(state: FlightSearchState) -> FlightSearchState:
+def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
     """Normalize extracted information for Amadeus API format using LLM for intelligent mapping."""
     try:
         (state.setdefault("node_trace", [])).append("normalize_info")
@@ -53,10 +53,8 @@ def normalize_info_node(state: FlightSearchState) -> FlightSearchState:
     try:
         if state.get('origin'):
             state['origin_location_code'] = normalize_location_to_airport_code(state['origin'])
-            _debug_print("Origin normalization", f"{state['origin']} → {state['origin_location_code']}")
         if state.get('destination'):
             state['destination_location_code'] = normalize_location_to_airport_code(state['destination'])
-            _debug_print("Destination normalization", f"{state['destination']} → {state['destination_location_code']}")
         if state.get('departure_date'):
             state['normalized_departure_date'] = state['departure_date']
         if state.get('cabin_class'):
