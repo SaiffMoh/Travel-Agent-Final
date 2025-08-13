@@ -19,6 +19,7 @@ class TravelSearchState(TypedDict, total=False):
 
     # Normalized for Amadeus API
     origin_location_code: Optional[str]
+    destination_location_code: Optional[str]
     normalized_departure_date: Optional[str]
     normalized_return_date: Optional[str]
     normalized_cabin: Optional[str]
