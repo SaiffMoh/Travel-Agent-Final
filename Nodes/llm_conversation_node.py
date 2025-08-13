@@ -3,7 +3,7 @@ import os
 from ..Models import TravelSearchState
 from langchain.schema import HumanMessage
 from ..Utils.getLLM import get_llm
-from Prompts.InputExtraction import build_input_extraction_prompt
+from Prompts.llm_conversation import build_input_extraction_prompt
 
 def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """LLM-driven conversational node that intelligently handles all user input parsing and follow-up questions."""
