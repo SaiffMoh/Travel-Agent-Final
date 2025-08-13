@@ -1,3 +1,7 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any, Union, TypedDict
+from datetime import datetime
+
 class ConversationStore:
     def __init__(self):
         self._conversations: Dict[str, List[Dict[str, Any]]] = {}
