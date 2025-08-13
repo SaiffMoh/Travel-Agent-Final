@@ -1,9 +1,9 @@
-from datetime import datetime
 import json
 import os
-from langchain.schema import HumanMessage
 from ..Models import FlightSearchState
-from ..Utils import get_llm, _debug_print  # adjust imports as needed
+from langchain.schema import HumanMessage
+from ..Utils import get_llm, _debug_print
+from Prompts.InputExtraction import build_input_extraction_prompt
 
 def llm_conversation_node(state: FlightSearchState) -> FlightSearchState:
     """LLM-driven conversational node that intelligently handles all user input parsing and follow-up questions."""
@@ -12,15 +12,6 @@ def llm_conversation_node(state: FlightSearchState) -> FlightSearchState:
     except Exception:
         pass
 
-    conversation_text = "".join(f"{m['role']}: {m['content']}\n" for m in state.get("conversation", []))
-    user_text = state.get("current_message", "")
-
-    current_date = datetime.now()
-    current_date_str = current_date.strftime("%Y-%m-%d")
-    current_month = current_date.month
-    current_day = current_date.day
-    current_year = current_date.year
-
     try:
         if not os.getenv("OPENAI_API_KEY"):
             state["followup_question"] = "I need an OpenAI API key to help you with flight bookings."
@@ -28,7 +19,7 @@ def llm_conversation_node(state: FlightSearchState) -> FlightSearchState:
             state["current_node"] = "llm_conversation"
             return state
 
-        llm_prompt = f"""..."""  # Keep your full original prompt here
+        llm_prompt = build_input_extraction_prompt(state)
         response = get_llm().invoke([HumanMessage(content=llm_prompt)])
 
         try:
