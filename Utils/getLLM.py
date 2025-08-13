@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 import os
 
 load_dotenv()
-llm = None
+_llm = None
 
 def get_llm() -> ChatOpenAI:
     global _llm
