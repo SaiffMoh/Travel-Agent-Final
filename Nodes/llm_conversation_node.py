@@ -1,6 +1,6 @@
 import json
 import os
-from ..Models import TravelSearchState
+from ..Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
 from ..Utils.getLLM import get_llm
 from Prompts.llm_conversation import build_input_extraction_prompt

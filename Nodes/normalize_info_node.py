@@ -1,6 +1,6 @@
 import os
 import re
-from ..Models import TravelSearchState
+from ..Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
 from ..Utils.getLLM import get_llm
 
