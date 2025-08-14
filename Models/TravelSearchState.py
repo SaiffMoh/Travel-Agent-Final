@@ -26,7 +26,9 @@ class TravelSearchState(TypedDict, total=False):
     normalized_trip_type: Optional[str]
 
     # Flight results
-    flight_offers: Optional[List[Dict[str, Any]]]
+    flight_offers_day_1: Optional[List[Dict[str, Any]]]
+    flight_offers_day_2: Optional[List[Dict[str, Any]]]
+    flight_offers_day_3: Optional[List[Dict[str, Any]]]
 
     # -------------------------
     # Hotel search
@@ -37,13 +39,12 @@ class TravelSearchState(TypedDict, total=False):
     currency: Optional[str]
     room_quantity: Optional[int]
     adult: Optional[int]
-    flight_offers_by_date: Dict[str, List[Dict]]
-    hotel_offers_by_dates: Dict[str, List[Dict]]
-    travel_packages: List[Dict]
 
     # Hotel results
-    hotels_by_city: Optional[List[Dict[str, Any]]]  # API 2 output
-    hotel_offers: Optional[List[Dict[str, Any]]]    # API 3 output
+    hotel_offers_duration_1: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_2: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_3: Optional[List[Dict[str, Any]]]
+    travel_packages: List[Dict]
 
     # -------------------------
     # Shared API fields

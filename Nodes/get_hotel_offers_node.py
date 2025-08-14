@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 
 def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
-    """Get hotel offers for multiple date ranges in parallel using Amadeus API."""
+    """Get hotel offers for 3 durations in parallel using extracted flight dates."""
     
     url = "https://test.api.amadeus.com/v3/shopping/hotel-offers"
     headers = {
@@ -16,31 +16,60 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
     checkin_dates = state.get("checkin_date", [])
     checkout_dates = state.get("checkout_date", [])
     
-    if not hotel_ids or not checkin_dates or not checkout_dates:
-        print("Missing hotel IDs or dates for hotel search")
-        state["hotel_offers_by_dates"] = {}
+    if not hotel_ids:
+        print("No hotel IDs available for hotel search")
+        state["hotel_offers_duration_1"] = []
+        state["hotel_offers_duration_2"] = []
+        state["hotel_offers_duration_3"] = []
         return state
     
-    # Create unique date range combinations
-    unique_date_ranges = []
-    date_range_set = set()
+    if not checkin_dates or not checkout_dates or len(checkin_dates) != len(checkout_dates):
+        print("Missing or mismatched hotel dates")
+        state["hotel_offers_duration_1"] = []
+        state["hotel_offers_duration_2"] = []
+        state["hotel_offers_duration_3"] = []
+        return state
+
+    # Prepare requests for up to 3 durations
+    duration_requests = []
+    for i in range(min(3, len(checkin_dates))):
+        duration_requests.append({
+            "duration_number": i + 1,
+            "checkin": checkin_dates[i],
+            "checkout": checkout_dates[i]
+        })
     
-    for checkin, checkout in zip(checkin_dates, checkout_dates):
-        date_key = f"{checkin}_{checkout}"
-        if date_key not in date_range_set:
-            date_range_set.add(date_key)
-            unique_date_ranges.append({
-                "checkin": checkin,
-                "checkout": checkout,
-                "key": date_key
+    # Fill remaining slots if we have less than 3
+    while len(duration_requests) < 3:
+        # Use the last available date range
+        if duration_requests:
+            last_request = duration_requests[-1]
+            duration_requests.append({
+                "duration_number": len(duration_requests) + 1,
+                "checkin": last_request["checkin"], 
+                "checkout": last_request["checkout"]
             })
-    
-    def fetch_hotels_for_dates(date_range):
-        """Fetch hotel offers for a specific date range."""
+        else:
+            # No dates available, use empty
+            duration_requests.append({
+                "duration_number": len(duration_requests) + 1,
+                "checkin": None,
+                "checkout": None
+            })
+
+    def fetch_hotels_for_duration(duration_info):
+        """Fetch hotel offers for a specific duration."""
+        duration_num = duration_info["duration_number"]
+        checkin = duration_info["checkin"]
+        checkout = duration_info["checkout"]
+        
+        if not checkin or not checkout:
+            return duration_num, []
+            
         params = {
             "hotelIds": ",".join(hotel_ids),
-            "checkInDate": date_range["checkin"],
-            "checkOutDate": date_range["checkout"],
+            "checkInDate": checkin,
+            "checkOutDate": checkout,
             "currencyCode": "EGP"
         }
         
@@ -50,34 +79,32 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
             data = response.json()
             hotel_offers = data.get("data", [])
             
-            # Find cheapest offer by room type for each hotel
+            # Process hotel offers to find cheapest by room type
             processed_offers = process_hotel_offers(hotel_offers)
             
-            return date_range["key"], processed_offers
+            return duration_num, processed_offers
             
         except Exception as e:
-            print(f"Error getting hotel offers for {date_range['checkin']} to {date_range['checkout']}: {e}")
-            return date_range["key"], []
+            print(f"Error getting hotel offers for duration {duration_num} ({checkin} to {checkout}): {e}")
+            return duration_num, []
     
-    # Parallel hotel search across all unique date ranges
-    hotel_offers_by_dates = {}
-    
-    with ThreadPoolExecutor(max_workers=len(unique_date_ranges)) as executor:
-        futures = [executor.submit(fetch_hotels_for_dates, date_range) for date_range in unique_date_ranges]
+    # Parallel hotel search across 3 durations
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(fetch_hotels_for_duration, duration_info) for duration_info in duration_requests]
         
         for fut in as_completed(futures):
-            date_key, offers = fut.result()
-            hotel_offers_by_dates[date_key] = offers
+            duration_number, offers = fut.result()
+            
+            # Save hotel offers by duration
+            if duration_number == 1:
+                state["hotel_offers_duration_1"] = offers
+            elif duration_number == 2:
+                state["hotel_offers_duration_2"] = offers
+            elif duration_number == 3:
+                state["hotel_offers_duration_3"] = offers
     
-    state["hotel_offers_by_dates"] = hotel_offers_by_dates
-    state["unique_date_ranges"] = unique_date_ranges
-    
-    # Keep legacy format for compatibility - use first date range result
-    if hotel_offers_by_dates:
-        first_key = list(hotel_offers_by_dates.keys())[0]
-        state["hotel_offers"] = hotel_offers_by_dates[first_key]
-    else:
-        state["hotel_offers"] = []
+    # Keep legacy format for compatibility (use first duration)
+    state["hotel_offers"] = state.get("hotel_offers_duration_1", [])
     
     return state
 

@@ -4,21 +4,24 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
-    """Get flight offers from Amadeus API for a 3-day window in parallel and extract hotel dates."""
+    """Get flight offers from Amadeus API for 3 consecutive days and extract hotel dates."""
 
     base_url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
     headers = {
         "Authorization": f"Bearer {state['access_token']}",
         "Content-Type": "application/json"
     }
+    
+    # Use the body from format_body_node
+    base_body = state.get("body", {})
     start_date_str = state.get("normalized_departure_date")
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
 
-    # Search 3-day window: departure date + 2 days
+    # Prepare requests for 3 consecutive days
     bodies = []
     for day_offset in range(0, 3):
         query_date = (start_date + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        body = dict(state["body"]) if state.get("body") else {}
+        body = dict(base_body)  # Copy the formatted body
 
         if body.get("originDestinations"):
             # Update departure date
@@ -32,54 +35,61 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
 
         # Set max offers to 1 for cheapest option
         body.setdefault("searchCriteria", {}).setdefault("maxFlightOffers", 1)
-        bodies.append((query_date, body))
+        bodies.append((day_offset + 1, query_date, body))
 
-    def fetch_for_day(day_body_tuple):
-        day, body = day_body_tuple
+    def fetch_for_day(day_info):
+        day_number, search_date, body = day_info
         try:
             resp = requests.post(base_url, headers=headers, json=body, timeout=100)
             resp.raise_for_status()
             data = resp.json()
             flights = data.get("data", []) or []
             
-            # Add search date metadata
+            # Add metadata to flights
             for f in flights:
-                f["_search_date"] = day
+                f["_search_date"] = search_date
+                f["_day_number"] = day_number
             
-            return day, flights
+            return day_number, flights
         except Exception as exc:
-            print(f"Error getting flight offers for {day}: {exc}")
-            return day, []
+            print(f"Error getting flight offers for day {day_number} ({search_date}): {exc}")
+            return day_number, []
 
     # Parallel search across 3 days
-    flight_offers_by_date = {}
     checkin_dates = []
     checkout_dates = []
     
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(fetch_for_day, b) for b in bodies]
+        futures = [executor.submit(fetch_for_day, body_info) for body_info in bodies]
+        
         for fut in as_completed(futures):
-            search_date, flights = fut.result()
-            flight_offers_by_date[search_date] = flights
+            day_number, flights = fut.result()
             
-            # Extract hotel dates from flight segments
+            # Save flight offers by day
+            if day_number == 1:
+                state["flight_offers_day_1"] = flights
+            elif day_number == 2:
+                state["flight_offers_day_2"] = flights
+            elif day_number == 3:
+                state["flight_offers_day_3"] = flights
+            
+            # Extract hotel dates from flight offers
             for flight in flights:
                 checkin_date, checkout_date = extract_hotel_dates_from_flight(flight)
                 if checkin_date and checkout_date:
                     checkin_dates.append(checkin_date)
                     checkout_dates.append(checkout_date)
 
-    # Update state - store both formats
-    state["flight_offers_by_date"] = flight_offers_by_date
+    # Save extracted hotel dates
     state["checkin_date"] = checkin_dates
     state["checkout_date"] = checkout_dates
     
-    # Keep legacy format for compatibility AND set flight_offers for create_packages
+    # Keep legacy format for compatibility (all flights combined)
     all_results = []
-    for flights in flight_offers_by_date.values():
-        all_results.extend(flights)
+    for day_key in ["flight_offers_day_1", "flight_offers_day_2", "flight_offers_day_3"]:
+        if state.get(day_key):
+            all_results.extend(state[day_key])
     state["result"] = {"data": all_results}
-    state["flight_offers"] = all_results  # For create_packages node to use
     
     return state
 
