@@ -7,10 +7,6 @@ from Prompts.llm_conversation import build_input_extraction_prompt
 
 def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """LLM-driven conversational node that intelligently handles all user input parsing and follow-up questions."""
-    try:
-        (state.setdefault("node_trace", [])).append("llm_conversation")
-    except Exception:
-        pass
 
     try:
         if not os.getenv("OPENAI_API_KEY"):
