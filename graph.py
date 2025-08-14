@@ -1,18 +1,16 @@
 from langgraph.graph import StateGraph, END
 from Models.TravelSearchState import TravelSearchState
-from Nodes import (
-    llm_conversation_node,
-    analyze_conversation_node,
-    normalize_info_node,
-    format_body_node,
-    get_access_token_node,
-    get_flight_offers_node,
-    get_city_IDs_node,
-    get_hotel_offers_node,
-    create_packages,
-    summarize_packages,
-    toHTML
-)
+from Nodes.analyze_conversation_node import analyze_conversation_node
+from Nodes.create_packages import create_packages
+from Nodes.format_body_node import format_body_node
+from Nodes.get_access_token_node import get_access_token_node
+from Nodes.get_city_IDs_node import get_city_IDs_node
+from Nodes.get_flight_offers_node import get_flight_offers_node
+from Nodes.get_hotel_offers_node import get_hotel_offers_node
+from Nodes.llm_conversation_node import llm_conversation_node
+from Nodes.normalize_info_node import normalize_info_node
+from Nodes.summarize_packages import summarize_packages
+from Nodes.toHTML import toHTML
 from Utils.decisions import check_info_complete
 
 def create_travel_graph():
