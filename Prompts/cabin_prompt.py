@@ -10,6 +10,7 @@ def get_cabin_type_prompt(cabin: str):
 
     If the cabin type is unclear or misspelled, guess the most likely match.
     Return ONLY one of the above cabin types exactly as written, with no extra words.
+    Answer must be plain text (not JSON).
 
     Cabin type input: {cabin}
     """

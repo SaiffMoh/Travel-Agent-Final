@@ -2,7 +2,7 @@ import os
 import re
 from Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
-from Utils.getLLM import get_llm
+from Utils.getLLM import get_text_llm
 from Prompts.cabin_prompt import get_cabin_type_prompt
 from Prompts.airport_prompt import airport_prompt
 
@@ -18,7 +18,7 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
 
         try:
             if os.getenv("OPENAI_API_KEY"):
-                response = get_llm().invoke([HumanMessage(content=airport_prompt(location))])
+                response = get_text_llm().invoke([HumanMessage(content=airport_prompt(location))])
                 airport_code = response.content.strip().upper()
                 codes = re.findall(r'\b[A-Z]{3}\b', airport_code)
                 if codes:
@@ -44,7 +44,7 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
 
         try:
             if os.getenv("OPENAI_API_KEY"):
-                response = get_llm().invoke([HumanMessage(content=get_cabin_type_prompt(cabin))])
+                response = get_text_llm().invoke([HumanMessage(content=get_cabin_type_prompt(cabin))])
                 return response.content.strip().upper()
         except Exception as e:
             print(f"Error getting cabin type for {cabin}: {e}")
@@ -55,7 +55,7 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
         elif 'business' in cabin_lower or 'biz' in cabin_lower:
             return 'BUSINESS'
         elif 'first' in cabin_lower:
-            return 'FIRST_CLASS'
+            return 'FIRST'
         return 'ECONOMY'
 
     try:

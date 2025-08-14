@@ -15,7 +15,6 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
             if isinstance(value, dict):
                 value_html = dict_to_table(value)
             elif isinstance(value, list):
-                # Convert list of dicts to nested tables or plain list
                 value_html = "<table border='1'>" + "".join(
                     "<tr><td>" + dict_to_table(item) + "</td></tr>" if isinstance(item, dict)
                     else f"<tr><td>{html.escape(str(item))}</td></tr>"
@@ -26,22 +25,21 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
             rows.append(f"<tr><td>{html.escape(str(key))}</td><td>{value_html}</td></tr>")
         return "<table border='1'>" + "".join(rows) + "</table>"
 
-    # Convert each package to a table string
+    # Render packages to HTML string list
     travel_packages = state.get("travel_packages", [])
-    
-    # Create formatted HTML for each package
-    formatted_packages = [
+    try:
+        print(f"toHTML: received {len(travel_packages)} packages")
+    except Exception as _:
+        print("toHTML: unable to determine package count")
+    html_packages = [
         dict_to_table(pkg) if isinstance(pkg, dict) else html.escape(str(pkg))
         for pkg in travel_packages
     ]
-    
-    # Update the state with formatted packages
-    state["travel_packages"] = formatted_packages
-    state["current_node"] = "to_html"
-    
-    # print("============ travel packages", travel_packages)
-    print("============ formatted_packages", formatted_packages[0])
+    print(f"toHTML: built {len(html_packages)} html snippets")
 
+    # Attach HTML to state and continue
+    state["travel_packages_html"] = html_packages
+    state["current_node"] = "to_html"
     return state
 
 

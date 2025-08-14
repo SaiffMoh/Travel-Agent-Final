@@ -1,5 +1,5 @@
-from Models import TravelSearchState
-from Utils.getLLM import get_llm
+from Models.TravelSearchState import TravelSearchState
+from Utils.getLLM import get_text_llm
 from Prompts.summary_prompt import summary_prompt
 from langchain.schema import HumanMessage
 
@@ -9,9 +9,19 @@ def summarize_packages(state: TravelSearchState) -> TravelSearchState:
 
     # Get the 3 travel packages
     travel_packages = state.get("travel_packages", [])
+    try:
+        print(f"summarize_packages: received {len(travel_packages)} packages")
+        if travel_packages:
+            first_pkg = travel_packages[0]
+            if isinstance(first_pkg, dict):
+                pricing_info = first_pkg.get("pricing", {})
+                print("summarize_packages: pkg[0] pricing:", pricing_info)
+    except Exception as _:
+        print("summarize_packages: error while printing package debug info")
     
     if not travel_packages or len(travel_packages) == 0:
         state["package_summary"] = "No travel packages found for your search. Please try different dates or destinations."
+        print("summarize_packages: no travel packages available")
         return state
     
     # Ensure we have 3 packages (pad with None if needed)
@@ -29,7 +39,8 @@ def summarize_packages(state: TravelSearchState) -> TravelSearchState:
         llm_prompt = summary_prompt(package1, package2, package3)
         
         # Use OpenAI LLM to generate summary
-        response = get_llm().invoke([HumanMessage(content=llm_prompt)])
+        print("summarize_packages: using text LLM for summary")
+        response = get_text_llm().invoke([HumanMessage(content=llm_prompt)])
         state["package_summary"] = response.content
         
         print("Generated package summary:", response.content)

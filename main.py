@@ -110,7 +110,8 @@ async def chat_endpoint(request: ChatRequest):
             "duration": None,
             "followup_question": None,
             "current_node": "llm_conversation",
-            "followup_count": 0
+            "followup_count": 0,
+            "request_type": "flights"
         }
 
         if graph is None:
@@ -121,6 +122,16 @@ async def chat_endpoint(request: ChatRequest):
         result = graph.invoke(state)
         
         print("✓ LangGraph execution completed")
+        try:
+            print("Result keys:", list(result.keys()))
+            if result.get("travel_packages"):
+                print(f"✓ travel_packages present: {len(result.get('travel_packages', []))}")
+            if result.get("travel_packages_html"):
+                print(f"✓ travel_packages_html present: {len(result.get('travel_packages_html', []))}")
+            if result.get("package_summary"):
+                print("✓ package_summary present")
+        except Exception as _:
+            print("(debug) unable to print result keys")
 
         # Build extracted info for response
         extracted_info = ExtractedInfo(
@@ -139,6 +150,11 @@ async def chat_endpoint(request: ChatRequest):
             conversation_store.add_message(request.thread_id, "assistant", assistant_message)
             html_content = question_to_html(assistant_message, extracted_info)
             return html_content
+
+        # If we have travel packages HTML, return it so the user can see packages
+        if result.get("travel_packages_html"):
+            print(f"✓ Returning {len(result['travel_packages_html'])} travel packages (HTML)")
+            return result["travel_packages_html"]
 
         # Build flight results if search completed
         flights = []
