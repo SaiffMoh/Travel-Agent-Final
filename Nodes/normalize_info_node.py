@@ -3,24 +3,23 @@ import re
 from ..Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
 from ..Utils.getLLM import get_llm
+from Prompts.cabin_prompt import get_cabin_type_prompt
+from Prompts.airport_prompt import airport_prompt
+
 
 def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
     """Normalize extracted information for Amadeus API format using LLM for intelligent mapping."""
-    try:
-        (state.setdefault("node_trace", [])).append("normalize_info")
-    except Exception:
-        pass
 
     def normalize_location_to_airport_code(location: str) -> str:
         if not location:
             return ""
         if len(location.strip()) == 3 and location.isalpha():
             return location.upper()
+
         try:
             if os.getenv("OPENAI_API_KEY"):
-                airport_prompt = f"""..."""  # Keep your original prompt here
-                airport_response = get_llm().invoke([HumanMessage(content=airport_prompt)])
-                airport_code = airport_response.content.strip().upper()
+                response = get_llm().invoke([HumanMessage(content=airport_prompt(location))])
+                airport_code = response.content.strip().upper()
                 codes = re.findall(r'\b[A-Z]{3}\b', airport_code)
                 if codes:
                     return codes[0]
@@ -28,6 +27,7 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
                     return airport_code
         except Exception as e:
             print(f"Error getting airport code for {location}: {e}")
+
         airport_mappings = {
             'new york': 'JFK', 'nyc': 'JFK', 'los angeles': 'LAX', 'la': 'LAX',
             'chicago': 'ORD', 'london': 'LHR', 'paris': 'CDG', 'tokyo': 'NRT',
@@ -41,6 +41,14 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
     def normalize_cabin_class(cabin: str) -> str:
         if not cabin:
             return 'ECONOMY'
+
+        try:
+            if os.getenv("OPENAI_API_KEY"):
+                response = get_llm().invoke([HumanMessage(content=get_cabin_type_prompt(cabin))])
+                return response.content.strip().upper()
+        except Exception as e:
+            print(f"Error getting cabin type for {cabin}: {e}")
+
         cabin_lower = cabin.lower()
         if 'economy' in cabin_lower or 'eco' in cabin_lower or 'coach' in cabin_lower:
             return 'ECONOMY'
@@ -59,10 +67,12 @@ def normalize_info_node(state: TravelSearchState) -> TravelSearchState:
             state['normalized_departure_date'] = state['departure_date']
         if state.get('cabin_class'):
             state['normalized_cabin'] = normalize_cabin_class(state['cabin_class'])
+
         state['normalized_trip_type'] = 'round_trip'
         state['current_node'] = 'normalize_info'
     except Exception as e:
         print(f"Error in normalization: {e}")
         state["followup_question"] = "Sorry, I had trouble processing your flight information. Please try again."
         state["needs_followup"] = True
+
     return state

@@ -3,10 +3,6 @@ from ..Models.TravelSearchState import TravelSearchState
 
 def format_body_node(state: TravelSearchState) -> TravelSearchState:
     """Format the request body for Amadeus API"""
-    try:
-        (state.setdefault("node_trace", [])).append("format_body")
-    except Exception:
-        pass
 
     def format_flight_offers_body(origin_location_code, destination_location_code, departure_date, cabin="ECONOMY", duration=None):
         origin_destinations = [{

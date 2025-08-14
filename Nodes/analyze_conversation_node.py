@@ -3,10 +3,6 @@ from ..Models.TravelSearchState import TravelSearchState
 
 def analyze_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """Validate the information extracted by the LLM conversation node."""
-    try:
-        (state.setdefault("node_trace", [])).append("analyze_conversation")
-    except Exception:
-        pass
 
     required_fields = ["departure_date", "origin", "destination", "cabin_class", "duration"]
     missing_fields = [f for f in required_fields if not state.get(f)]
