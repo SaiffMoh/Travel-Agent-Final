@@ -27,12 +27,19 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
         return "<table border='1'>" + "".join(rows) + "</table>"
 
     # Convert each package to a table string
-    new_state = TravelSearchState()
-    new_state.travel_packages = [
+    travel_packages = state.get("travel_packages", [])
+    
+    # Create formatted HTML for each package
+    formatted_packages = [
         dict_to_table(pkg) if isinstance(pkg, dict) else html.escape(str(pkg))
-        for pkg in state.travel_packages
+        for pkg in travel_packages
     ]
-    return new_state
+    
+    # Update the state with formatted packages
+    state["travel_packages"] = formatted_packages
+    state["current_node"] = "to_html"
+    
+    return state
 
 
 # unused function (maybe)

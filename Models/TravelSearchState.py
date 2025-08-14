@@ -53,4 +53,14 @@ class TravelSearchState(TypedDict, total=False):
     access_token: Optional[str]
     package_summary: Optional[str]
     destination_location_code: Optional[str]
+    
+    # -------------------------
+    # Flow control fields
+    # -------------------------
+    request_type: Optional[str]  # "flights", "hotels", "packages", "selection_request"
+    info_complete: Optional[bool]
+    needs_followup: Optional[bool]
+    followup_question: Optional[str]
+    current_node: Optional[str]
+    formatted_results: Optional[str]
 

@@ -34,18 +34,24 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
             state["followup_question"] = llm_result.get("followup_question")
             state["needs_followup"] = llm_result.get("needs_followup", True)
             state["info_complete"] = llm_result.get("info_complete", False)
+            
+            # Set request_type to flights by default since we're handling flight bookings
+            if not state.get("request_type"):
+                state["request_type"] = "flights"
 
         except json.JSONDecodeError:
             print(f"LLM response parsing error. Raw response: {response.content}")
             state["followup_question"] = "I had trouble understanding. Could you please tell me your departure city, destination, and preferred travel date?"
             state["needs_followup"] = True
             state["info_complete"] = False
+            state["request_type"] = "flights"
 
     except Exception as e:
         print(f"Error in LLM conversation node: {e}")
         state["followup_question"] = "I'm having technical difficulties. Please try again with your flight details."
         state["needs_followup"] = True
         state["info_complete"] = False
+        state["request_type"] = "flights"
 
     state["current_node"] = "llm_conversation"
     return state

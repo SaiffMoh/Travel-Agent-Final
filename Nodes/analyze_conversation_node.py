@@ -27,6 +27,8 @@ def analyze_conversation_node(state: TravelSearchState) -> TravelSearchState:
         state["info_complete"] = True
         state["needs_followup"] = False
         state["followup_question"] = None
+        # Set request_type to indicate we want to search for flights
+        state["request_type"] = "flights"
 
     state["current_node"] = "analyze_conversation"
     return state
