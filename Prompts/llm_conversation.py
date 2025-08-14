@@ -1,6 +1,7 @@
 from datetime import datetime
+from ..Models.TravelSearchState import TravelSearchState
 
-def build_input_extraction_prompt(state):
+def build_input_extraction_prompt(state: TravelSearchState):
     """Build the LLM prompt for extracting flight booking information."""
     current_date = datetime.now()
     current_date_str = current_date.strftime("%Y-%m-%d")

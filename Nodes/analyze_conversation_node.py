@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from ..Models import TravelSearchState
+from ..Models.TravelSearchState import TravelSearchState
 
 def analyze_conversation_node(state: TravelSearchState) -> TravelSearchState:
     """Validate the information extracted by the LLM conversation node."""
