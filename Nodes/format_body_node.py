@@ -5,6 +5,12 @@ def format_body_node(state: TravelSearchState) -> TravelSearchState:
     """Format the request body for Amadeus API"""
 
     def format_flight_offers_body(origin_location_code, destination_location_code, departure_date, cabin="ECONOMY", duration=None):
+        # Validate and normalize cabin class for Amadeus API
+        valid_cabins = ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"]
+        cabin = cabin.upper() if cabin else "ECONOMY"
+        if cabin not in valid_cabins:
+            print(f"WARNING: Invalid cabin '{cabin}', defaulting to ECONOMY")
+            cabin = "ECONOMY"
         origin_destinations = [{
             "id": "1",
             "originLocationCode": origin_location_code,
@@ -26,6 +32,24 @@ def format_body_node(state: TravelSearchState) -> TravelSearchState:
                     "time": "10:00:00"
                 }
             })
+        return {
+            "currencyCode": "EGP",
+            "originDestinations": origin_destinations,
+            "travelers": [{"id": "1", "travelerType": "ADULT"}],
+            "sources": ["GDS"],
+            "searchCriteria": {
+                "maxFlightOffers": 1, #this will return the cheapest flight
+                "flightFilters": {
+                    "cabinRestrictions": [{
+                        "cabin": cabin,
+                        "coverage": "MOST_SEGMENTS",
+                        "originDestinationIds": [od["id"] for od in origin_destinations]
+                    }]
+                }
+            }
+        }
+        
+        print(f"DEBUG: Flight request body - cabin: {cabin}, currency: EGP")
         return {
             "currencyCode": "EGP",
             "originDestinations": origin_destinations,

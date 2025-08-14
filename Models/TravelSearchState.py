@@ -33,7 +33,11 @@ class TravelSearchState(TypedDict, total=False):
     # -------------------------
     # Hotel search
     # -------------------------
-    hotel_ids: Optional[List[str]]
+    hotel_id: Optional[List[str]]  # Primary hotel IDs key
+    hotel_ids: Optional[List[str]]  # Backup hotel IDs key
+    destination_hotel_ids: Optional[List[str]]  # Another backup key
+    hotel_ids_retrieved: Optional[bool]  # Flag to track if hotel IDs were retrieved
+    hotel_retrieval_timestamp: Optional[str]  # Timestamp of hotel ID retrieval
     checkin_date: Optional[List[str]]   # from departure_date
     checkout_date: Optional[List[str]]  # from departure_date + duration
     currency: Optional[str]

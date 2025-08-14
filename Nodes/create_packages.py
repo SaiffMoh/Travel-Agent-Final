@@ -64,8 +64,15 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                          checkin_date: str, checkout_date: str) -> Dict[str, Any]:
     """Create a single travel package from flight and hotel data."""
     
-    if not flights or not checkin_date or not checkout_date:
-        print(f"Insufficient data for package {package_id}")
+    print(f"DEBUG: Creating package {package_id} - flights: {len(flights) if flights else 0}, hotels: {len(hotels) if hotels else 0}")
+    print(f"DEBUG: Package {package_id} dates - checkin: {checkin_date}, checkout: {checkout_date}")
+    
+    if not flights:
+        print(f"Insufficient flight data for package {package_id}")
+        return None
+        
+    if not checkin_date or not checkout_date:
+        print(f"Insufficient date data for package {package_id}")
         return None
     
     try:

@@ -3,7 +3,7 @@ def get_cabin_type_prompt(cabin: str):
     You are a travel booking expert.
     Your task is to return the standard cabin type that matches the given input.
     The possible cabin types are:
-    - EECONOMY
+    - ECONOMY
     - PREMIUM_ECONOMY
     - BUSINESS
     - FIRST_CLASS
