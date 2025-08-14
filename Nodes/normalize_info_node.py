@@ -1,8 +1,8 @@
 import os
 import re
-from ..Models.TravelSearchState import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
-from ..Utils.getLLM import get_llm
+from Utils.getLLM import get_llm
 from Prompts.cabin_prompt import get_cabin_type_prompt
 from Prompts.airport_prompt import airport_prompt
 

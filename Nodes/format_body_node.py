@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from ..Models.TravelSearchState import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 
 def format_body_node(state: TravelSearchState) -> TravelSearchState:
     """Format the request body for Amadeus API"""

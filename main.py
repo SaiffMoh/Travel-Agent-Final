@@ -7,8 +7,12 @@ from typing import List
 import traceback
 import logging
 from Utils.question_to_html import question_to_html
-from graph import create_flight_search_graph
-from Models import ChatRequest, ExtractedInfo, FlightResult, conversation_store
+from graph import create_travel_graph
+from Models.ChatRequest import ChatRequest
+from Models.ExtractedInfo import ExtractedInfo
+from Models.FlightResult import FlightResult
+from Models.ConversationStore import ConversationStore
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,7 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-graph = create_flight_search_graph().compile()
+graph = create_travel_graph().compile()
 
 @app.get("/")
 async def root():
@@ -90,12 +94,12 @@ async def chat_endpoint(request: ChatRequest):
 
 
         # Get conversation history from backend store
-        conversation_history = conversation_store.get_conversation(request.thread_id)
+        conversation_history = ConversationStore.get_conversation(request.thread_id)
         print(f"✓ Got conversation history: {len(conversation_history)} messages")
         
         # Add user message to conversation history
-        conversation_store.add_message(request.thread_id, "user", user_message)
-        updated_conversation = conversation_store.get_conversation(request.thread_id)
+        ConversationStore.add_message(request.thread_id, "user", user_message)
+        updated_conversation = ConversationStore.get_conversation(request.thread_id)
         print(f"✓ Updated conversation: {len(updated_conversation)} messages")
 
         # Initialize state as dictionary for LangGraph
@@ -145,7 +149,7 @@ async def chat_endpoint(request: ChatRequest):
             assistant_message = result.get("followup_question", "Could you provide more details about your flight?")
             
             # Add assistant response to conversation history
-            conversation_store.add_message(request.thread_id, "assistant", assistant_message)
+            ConversationStore.add_message(request.thread_id, "assistant", assistant_message)
             
             # Format as HTML
             html_content = question_to_html(assistant_message, extracted_info)
@@ -191,7 +195,7 @@ async def chat_endpoint(request: ChatRequest):
         assistant_message = result.get("summary", "Here are your flight options:")
         
         # Add assistant response to conversation history  
-        conversation_store.add_message(request.thread_id, "assistant", assistant_message)
+        ConversationStore.add_message(request.thread_id, "assistant", assistant_message)
         
         return flights
 
@@ -212,13 +216,13 @@ async def chat_endpoint(request: ChatRequest):
 async def reset_conversation(thread_id: str):
     """Reset conversation history for a specific thread"""
     print(f"Resetting conversation for thread: {thread_id}")
-    conversation_store.clear_conversation(thread_id)
+    ConversationStore.clear_conversation(thread_id)
     return {"message": f"Conversation for thread {thread_id} has been reset"}
 
 @app.get("/api/threads")
 async def get_active_threads():
     """Get all active conversation threads"""
-    threads = conversation_store.get_all_threads()
+    threads = ConversationStore.get_all_threads()
     print(f"Getting active threads: {len(threads)} found")
     return {"threads": threads, "count": len(threads)}
 
