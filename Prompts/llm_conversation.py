@@ -1,5 +1,5 @@
 from datetime import datetime
-from ..Models.TravelSearchState import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 
 def build_input_extraction_prompt(state: TravelSearchState):
     """Build the LLM prompt for extracting flight booking information."""
