@@ -1,6 +1,6 @@
-from Models import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 import requests
-from Nodes import get_access_token_node
+from Nodes.get_access_token_node import get_access_token_node
 
 
 def get_city_IDs_node(state: TravelSearchState) -> TravelSearchState:

@@ -50,6 +50,13 @@ def format_body_node(state: TravelSearchState) -> TravelSearchState:
         cabin=state.get("normalized_cabin", "ECONOMY"),
         duration=state.get("duration")
     )
+    print(
+        "format_body_node: origin=", state.get("origin_location_code"),
+        "dest=", state.get("destination_location_code"),
+        "depart=", state.get("normalized_departure_date"),
+        "cabin=", state.get("normalized_cabin"),
+        "duration=", state.get("duration")
+    )
 
     state["current_node"] = "format_body"
     return state

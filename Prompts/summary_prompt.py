@@ -27,4 +27,6 @@ def summary_prompt(package1, package2, package3):
 
     Keep it conversational and helpful.
     Start with something like: "Great! I found 3 exciting packages for your trip..."
+
+    Answer must be plain text (not JSON).
     """

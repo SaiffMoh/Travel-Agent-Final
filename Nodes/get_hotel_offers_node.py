@@ -1,4 +1,4 @@
-from Models import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict

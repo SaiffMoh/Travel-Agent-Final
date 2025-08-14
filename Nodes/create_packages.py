@@ -1,4 +1,4 @@
-from Models import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 from datetime import datetime
 from typing import Dict, List, Any
 
@@ -56,6 +56,15 @@ def create_packages(state: TravelSearchState) -> TravelSearchState:
     
     # Save packages to state
     state["travel_packages"] = packages
+    try:
+        print(f"create_packages: built {len(packages)} packages")
+        for pkg in packages:
+            pricing = pkg.get("pricing", {}) if isinstance(pkg, dict) else {}
+            print(
+                f"package {pkg.get('package_id')}: total_min_price={pricing.get('total_min_price')} {pricing.get('currency')}"
+            )
+    except Exception as _:
+        print("create_packages: error while printing packages debug info")
     
     return state
 

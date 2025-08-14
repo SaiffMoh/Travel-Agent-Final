@@ -1,4 +1,4 @@
-from Models import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,49 +95,43 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
 
 
 def extract_hotel_dates_from_flight(flight_offer):
-    """Extract check-in and check-out dates from flight segments."""
+    """Extract hotel check-in (outbound arrival) and check-out (return departure) dates."""
     try:
         itineraries = flight_offer.get("itineraries", [])
         if not itineraries:
             return None, None
-        
-        # Extract outbound arrival date (check-in)
-        outbound = itineraries[0]  # First itinerary is outbound
-        outbound_segments = outbound.get("segments", [])
+
+        # --- Outbound Arrival (Check-in) ---
+        outbound_segments = itineraries[0].get("segments", [])
         if not outbound_segments:
             return None, None
-            
-        # Get final destination arrival time
+        
         final_outbound_segment = outbound_segments[-1]
-        outbound_arrival = final_outbound_segment.get("arrival", {}).get("at")
-        
-        if not outbound_arrival:
+        outbound_arrival_iso = final_outbound_segment.get("arrival", {}).get("at")
+        if not outbound_arrival_iso:
             return None, None
-            
-        # Parse arrival datetime and get date
-        checkin_datetime = datetime.fromisoformat(outbound_arrival.replace('Z', '+00:00'))
-        checkin_date = checkin_datetime.strftime("%Y-%m-%d")
         
-        # Extract return departure date (check-out) if round trip
+        # Ensure timezone safety
+        checkin_datetime = datetime.fromisoformat(outbound_arrival_iso.replace("Z", "+00:00"))
+        checkin_date = checkin_datetime.date().strftime("%Y-%m-%d")
+
+        # --- Return Departure (Check-out) ---
+        checkout_date = None
         if len(itineraries) > 1:
-            return_itinerary = itineraries[1]  # Second itinerary is return
-            return_segments = return_itinerary.get("segments", [])
+            return_segments = itineraries[1].get("segments", [])
             if return_segments:
-                # Get first segment departure time (origin departure)
                 first_return_segment = return_segments[0]
-                return_departure = first_return_segment.get("departure", {}).get("at")
-                
-                if return_departure:
-                    checkout_datetime = datetime.fromisoformat(return_departure.replace('Z', '+00:00'))
-                    checkout_date = checkout_datetime.strftime("%Y-%m-%d")
-                    return checkin_date, checkout_date
-        
-        # For one-way trips, assume 1 night stay
-        checkout_datetime = checkin_datetime + timedelta(days=1)
-        checkout_date = checkout_datetime.strftime("%Y-%m-%d")
-        
+                return_departure_iso = first_return_segment.get("departure", {}).get("at")
+                if return_departure_iso:
+                    checkout_datetime = datetime.fromisoformat(return_departure_iso.replace("Z", "+00:00"))
+                    checkout_date = checkout_datetime.date().strftime("%Y-%m-%d")
+
+        # If no return trip, fallback to +1 day from check-in
+        if not checkout_date:
+            checkout_date = (checkin_datetime + timedelta(days=1)).date().strftime("%Y-%m-%d")
+
         return checkin_date, checkout_date
-        
+
     except Exception as e:
         print(f"Error extracting hotel dates from flight: {e}")
         return None, None

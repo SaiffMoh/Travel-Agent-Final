@@ -2,7 +2,7 @@ import json
 import os
 from Models.TravelSearchState import TravelSearchState
 from langchain.schema import HumanMessage
-from Utils.getLLM import get_llm
+from Utils.getLLM import get_llm_json
 from Prompts.llm_conversation import build_input_extraction_prompt
 
 def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
@@ -16,7 +16,9 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
             return state
 
         llm_prompt = build_input_extraction_prompt(state)
-        response = get_llm().invoke([HumanMessage(content=llm_prompt)])
+        print("llm_conversation_node: using JSON-mode LLM (response_format=json_object)")
+        response = get_llm_json().invoke([HumanMessage(content=llm_prompt)])
+        print(f"llm_conversation_node: got response length={len(response.content) if hasattr(response, 'content') else 'n/a'}")
 
         try:
             llm_result = json.loads(response.content)
@@ -28,12 +30,15 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
                 state["destination"] = llm_result["destination"]
             if llm_result.get("cabin_class"):
                 state["cabin_class"] = llm_result["cabin_class"]
-            if llm_result.get("duration"):
+            if llm_result.get("duration") is not None:
                 state["duration"] = llm_result["duration"]
 
+            # Capture follow-up suggestion but don't force flags here; analyze node decides
             state["followup_question"] = llm_result.get("followup_question")
-            state["needs_followup"] = llm_result.get("needs_followup", True)
-            state["info_complete"] = llm_result.get("info_complete", False)
+
+            # If LLM believes it's complete, keep a hint
+            if llm_result.get("info_complete"):
+                state["request_type"] = state.get("request_type") or "flights"
 
         except json.JSONDecodeError:
             print(f"LLM response parsing error. Raw response: {response.content}")

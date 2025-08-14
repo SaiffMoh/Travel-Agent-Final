@@ -1,5 +1,5 @@
 import os
-from Models import TravelSearchState
+from Models.TravelSearchState import TravelSearchState
 import requests
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,4 +17,6 @@ def get_access_token_node(state: TravelSearchState) -> TravelSearchState:
     response.raise_for_status()
     token_json = response.json()
     state["access_token"] = token_json.get("access_token")
+    if state.get("access_token"):
+        print("get_access_token_node: acquired access token")
     return state
