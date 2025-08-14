@@ -39,6 +39,9 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
     state["travel_packages"] = formatted_packages
     state["current_node"] = "to_html"
     
+    # print("============ travel packages", travel_packages)
+    print("============ formatted_packages", formatted_packages[0])
+
     return state
 
 
