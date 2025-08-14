@@ -6,6 +6,7 @@ from langchain.schema import HumanMessage
 def summarize_packages(state: TravelSearchState) -> TravelSearchState:
     """Generate LLM summary and recommendation for travel packages."""
 
+
     # Get the 3 travel packages
     travel_packages = state.get("travel_packages", [])
     

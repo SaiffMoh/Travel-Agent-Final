@@ -11,7 +11,7 @@ from graph import create_travel_graph
 from Models.ChatRequest import ChatRequest
 from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
-from Models.ConversationStore import ConversationStore
+from Models.ConversationStore import conversation_store
 
 
 logging.basicConfig(level=logging.INFO)
@@ -66,11 +66,6 @@ async def health():
 async def chat_endpoint(request: ChatRequest):
     """Handles the conversation for flight search using thread_id and user_msg."""
     
-    # print(f"\n=== CHAT REQUEST RECEIVED ===")
-    # print(f"Thread ID: {request.thread_id}")
-    # print(f"User message: '{request.user_msg}'")
-    # print(f"Request type: {type(request)}")
-    
     try:
         # Validate inputs
         if not request.thread_id:
@@ -82,7 +77,6 @@ async def chat_endpoint(request: ChatRequest):
             print("ERROR: Empty user message")
             raise HTTPException(status_code=400, detail="user_msg cannot be empty")
 
-
         # Validate API keys
         missing_keys = [key for key in required_keys if not os.getenv(key)]
         if missing_keys:
@@ -92,17 +86,15 @@ async def chat_endpoint(request: ChatRequest):
                 detail=f"Missing API keys: {', '.join(missing_keys)}"
             )
 
-
-        # Get conversation history from backend store
-        conversation_history = ConversationStore.get_conversation(request.thread_id)
+        # ✅ Use global conversation store
+        conversation_history = conversation_store.get_conversation(request.thread_id)
         print(f"✓ Got conversation history: {len(conversation_history)} messages")
         
-        # Add user message to conversation history
-        ConversationStore.add_message(request.thread_id, "user", user_message)
-        updated_conversation = ConversationStore.get_conversation(request.thread_id)
+        conversation_store.add_message(request.thread_id, "user", user_message)
+        updated_conversation = conversation_store.get_conversation(request.thread_id)
         print(f"✓ Updated conversation: {len(updated_conversation)} messages")
 
-        # Initialize state as dictionary for LangGraph
+        # Initialize state for LangGraph
         state = {
             "thread_id": request.thread_id,
             "conversation": updated_conversation,
@@ -111,7 +103,6 @@ async def chat_endpoint(request: ChatRequest):
             "info_complete": False,
             "trip_type": "round trip",  # Always round trip
             "node_trace": [],
-            # Initialize empty fields for LLM to populate
             "departure_date": None,
             "origin": None,
             "destination": None,
@@ -122,7 +113,6 @@ async def chat_endpoint(request: ChatRequest):
             "followup_count": 0
         }
 
-        # Check if graph was compiled at startup
         if graph is None:
             print("ERROR: Graph was not compiled at startup")
             raise HTTPException(status_code=500, detail="Graph compilation failed")
@@ -131,8 +121,6 @@ async def chat_endpoint(request: ChatRequest):
         result = graph.invoke(state)
         
         print("✓ LangGraph execution completed")
-        # print(f"Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-        # print(f"Node trace: {result.get('node_trace', [])}")
 
         # Build extracted info for response
         extracted_info = ExtractedInfo(
@@ -148,12 +136,8 @@ async def chat_endpoint(request: ChatRequest):
         if result.get("needs_followup", True):
             assistant_message = result.get("followup_question", "Could you provide more details about your flight?")
             
-            # Add assistant response to conversation history
-            ConversationStore.add_message(request.thread_id, "assistant", assistant_message)
-            
-            # Format as HTML
+            conversation_store.add_message(request.thread_id, "assistant", assistant_message)
             html_content = question_to_html(assistant_message, extracted_info)
-            # print(f"Returning HTML response (length: {len(html_content)})")
             return html_content
 
         # Build flight results if search completed
@@ -191,11 +175,8 @@ async def chat_endpoint(request: ChatRequest):
             ]
             print(f"returned {len(flights)} flight results")
 
-        # Prepare response message with summary
         assistant_message = result.get("summary", "Here are your flight options:")
-        
-        # Add assistant response to conversation history  
-        ConversationStore.add_message(request.thread_id, "assistant", assistant_message)
+        conversation_store.add_message(request.thread_id, "assistant", assistant_message)
         
         return flights
 
@@ -210,19 +191,18 @@ async def chat_endpoint(request: ChatRequest):
             status_code=500,
             detail="Internal server error while processing request"
         )
-
 # Keep your other endpoints...
 @app.post("/api/reset/{thread_id}")
 async def reset_conversation(thread_id: str):
     """Reset conversation history for a specific thread"""
     print(f"Resetting conversation for thread: {thread_id}")
-    ConversationStore.clear_conversation(thread_id)
+    conversation_store.clear_conversation(thread_id)
     return {"message": f"Conversation for thread {thread_id} has been reset"}
 
 @app.get("/api/threads")
 async def get_active_threads():
     """Get all active conversation threads"""
-    threads = ConversationStore.get_all_threads()
+    threads = conversation_store.get_all_threads()
     print(f"Getting active threads: {len(threads)} found")
     return {"threads": threads, "count": len(threads)}
 
