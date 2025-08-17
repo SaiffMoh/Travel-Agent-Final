@@ -6,4 +6,6 @@ Rules:
 - For cities with multiple airports, return the main international airport
 - Examples: "New York" → "JFK", "Los Angeles" → "LAX", "London" → "LHR", "Paris" → "CDG"
 
+Answer must be plain text (not JSON).
+
 Airport code:"""

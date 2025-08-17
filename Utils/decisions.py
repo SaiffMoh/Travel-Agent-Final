@@ -20,8 +20,12 @@ def check_info_complete(state: TravelSearchState) -> str:
 
     # Check if information is complete
     if state.get("info_complete", False):
+<<<<<<< HEAD
         req_type = state.get("request_type", "flights")  # Default to flights
         print(f"DEBUG: Info complete, routing to {req_type}")
+=======
+        req_type = state.get("request_type") or "flights"
+>>>>>>> 6af8097fe9825879df8bfa14c52dbb89ce68716d
         if req_type == "flights":
             return "flights"
         elif req_type == "hotels":
@@ -35,11 +39,3 @@ def check_info_complete(state: TravelSearchState) -> str:
     print("DEBUG: Info incomplete, routing to ask_followup")
     return "ask_followup"
 
-
-def check_selection_complete(state: TravelSearchState) -> str:
-    """
-    If after selecting a flight we have enough info for hotel search, continue.
-    """
-    if state.get("city_code") and state.get("checkin_date") and state.get("checkout_date"):
-        return "continue_hotel_search"
-    return "ask_followup"
