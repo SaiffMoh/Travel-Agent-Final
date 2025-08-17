@@ -35,19 +35,10 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
 
             # Capture follow-up suggestion but don't force flags here; analyze node decides
             state["followup_question"] = llm_result.get("followup_question")
-<<<<<<< HEAD
-            state["needs_followup"] = llm_result.get("needs_followup", True)
-            state["info_complete"] = llm_result.get("info_complete", False)
-            
-            # Set request_type to flights by default since we're handling flight bookings
-            if not state.get("request_type"):
-                state["request_type"] = "flights"
-=======
 
             # If LLM believes it's complete, keep a hint
             if llm_result.get("info_complete"):
                 state["request_type"] = state.get("request_type") or "flights"
->>>>>>> 6af8097fe9825879df8bfa14c52dbb89ce68716d
 
         except json.JSONDecodeError:
             print(f"LLM response parsing error. Raw response: {response.content}")

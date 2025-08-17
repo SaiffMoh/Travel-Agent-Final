@@ -60,13 +60,8 @@ def analyze_conversation_node(state: TravelSearchState) -> TravelSearchState:
         state["info_complete"] = True
         state["needs_followup"] = False
         state["followup_question"] = None
-<<<<<<< HEAD
-        # Set request_type to indicate we want to search for flights
-        state["request_type"] = "flights"
-=======
         # Default request type to flights so the graph can proceed
         state.setdefault("request_type", "flights")
->>>>>>> 6af8097fe9825879df8bfa14c52dbb89ce68716d
 
     state["current_node"] = "analyze_conversation"
     return state

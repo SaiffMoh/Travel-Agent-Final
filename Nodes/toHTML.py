@@ -25,21 +25,6 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
             rows.append(f"<tr><td>{html.escape(str(key))}</td><td>{value_html}</td></tr>")
         return "<table border='1'>" + "".join(rows) + "</table>"
 
-<<<<<<< HEAD
-    # Convert each package to a table string
-    travel_packages = state.get("travel_packages", [])
-    
-    # Create formatted HTML for each package
-    formatted_packages = [
-        dict_to_table(pkg) if isinstance(pkg, dict) else html.escape(str(pkg))
-        for pkg in travel_packages
-    ]
-    
-    # Update the state with formatted packages
-    state["travel_packages"] = formatted_packages
-    state["current_node"] = "to_html"
-    
-=======
     # Render packages to HTML string list
     travel_packages = state.get("travel_packages", [])
     try:
@@ -55,7 +40,6 @@ def toHTML(state: TravelSearchState) -> TravelSearchState:
     # Attach HTML to state and continue
     state["travel_packages_html"] = html_packages
     state["current_node"] = "to_html"
->>>>>>> 6af8097fe9825879df8bfa14c52dbb89ce68716d
     return state
 
 

@@ -2,16 +2,13 @@ from Models.TravelSearchState import TravelSearchState
 import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from Utils.fetch_for_day import fetch_for_day
+from Utils.get_co2 import get_co2_emissions
 
 def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
     """Get flight offers from Amadeus API for 3 consecutive days and extract hotel dates."""
 
-    base_url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
-    headers = {
-        "Authorization": f"Bearer {state['access_token']}",
-        "Content-Type": "application/json"
-    }
-    
     # Use the body from format_body_node
     base_body = state.get("body", {})
     start_date_str = state.get("normalized_departure_date")
@@ -37,30 +34,13 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
         body.setdefault("searchCriteria", {}).setdefault("maxFlightOffers", 1)
         bodies.append((day_offset + 1, query_date, body))
 
-    def fetch_for_day(day_info):
-        day_number, search_date, body = day_info
-        try:
-            resp = requests.post(base_url, headers=headers, json=body, timeout=100)
-            resp.raise_for_status()
-            data = resp.json()
-            flights = data.get("data", []) or []
-            
-            # Add metadata to flights
-            for f in flights:
-                f["_search_date"] = search_date
-                f["_day_number"] = day_number
-            
-            return day_number, flights
-        except Exception as exc:
-            print(f"Error getting flight offers for day {day_number} ({search_date}): {exc}")
-            return day_number, []
-
+    
     # Parallel search across 3 days
     checkin_dates = []
     checkout_dates = []
     
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(fetch_for_day, body_info) for body_info in bodies]
+        futures = [executor.submit(fetch_for_day, body_info, state["access_token"]) for body_info in bodies]
         
         for fut in as_completed(futures):
             day_number, flights = fut.result()
@@ -90,7 +70,11 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
         if state.get(day_key):
             all_results.extend(state[day_key])
     state["result"] = {"data": all_results}
-    
+
+    co2 = get_co2_emissions(state["flight_offers_day_1"], state["access_token"])
+
+    state["co2_emissions"] = co2
+
     return state
 
 

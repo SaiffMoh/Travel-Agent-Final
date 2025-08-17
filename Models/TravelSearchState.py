@@ -39,6 +39,9 @@ class TravelSearchState(TypedDict, total=False):
 	flight_offers_day_3: Optional[List[Dict[str, Any]]]
 	formatted_results: Optional[List[Dict[str, Any]]]
 
+	# CO2 Emissions
+	co2_emissions: Optional[List[Dict[str, Any]]]
+
 	# -------------------------
 	# Hotel search
 	# -------------------------
@@ -51,25 +54,6 @@ class TravelSearchState(TypedDict, total=False):
 	room_quantity: Optional[int]
 	adult: Optional[int]
 
-<<<<<<< HEAD
-    # -------------------------
-    # Shared API fields
-    # -------------------------
-    body: Optional[Dict[str, Any]]
-    access_token: Optional[str]
-    package_summary: Optional[str]
-    destination_location_code: Optional[str]
-    
-    # -------------------------
-    # Flow control fields
-    # -------------------------
-    request_type: Optional[str]  # "flights", "hotels", "packages", "selection_request"
-    info_complete: Optional[bool]
-    needs_followup: Optional[bool]
-    followup_question: Optional[str]
-    current_node: Optional[str]
-    formatted_results: Optional[str]
-=======
 	# Hotel results
 	hotel_offers_duration_1: Optional[List[Dict[str, Any]]]
 	hotel_offers_duration_2: Optional[List[Dict[str, Any]]]
@@ -86,5 +70,4 @@ class TravelSearchState(TypedDict, total=False):
 	travel_packages_html: Optional[List[str]]
 	selected_offer: Optional[Dict[str, Any]]
 	package_results: Optional[Any]
->>>>>>> 6af8097fe9825879df8bfa14c52dbb89ce68716d
 
