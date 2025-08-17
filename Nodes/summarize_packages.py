@@ -5,58 +5,39 @@ from langchain.schema import HumanMessage
 
 def summarize_packages(state: TravelSearchState) -> TravelSearchState:
     """Generate LLM summary and recommendation for travel packages."""
-
-
+    
     # Get the 3 travel packages
     travel_packages = state.get("travel_packages", [])
-    try:
-        print(f"summarize_packages: received {len(travel_packages)} packages")
-        if travel_packages:
-            first_pkg = travel_packages[0]
-            if isinstance(first_pkg, dict):
-                pricing_info = first_pkg.get("pricing", {})
-                print("summarize_packages: pkg[0] pricing:", pricing_info)
-    except Exception as _:
-        print("summarize_packages: error while printing package debug info")
     
-    if not travel_packages or len(travel_packages) == 0:
+    if not travel_packages:
         state["package_summary"] = "No travel packages found for your search. Please try different dates or destinations."
-        print("summarize_packages: no travel packages available")
         return state
     
-    # Ensure we have 3 packages (pad with None if needed)
+    # Generate the LLM prompt
     package1 = travel_packages[0] if len(travel_packages) > 0 else None
     package2 = travel_packages[1] if len(travel_packages) > 1 else None
     package3 = travel_packages[2] if len(travel_packages) > 2 else None
     
-    # Handle cases where we have fewer than 3 packages
-    if not package1:
-        state["package_summary"] = "No valid travel packages could be created. Please check your search criteria."
-        return state
+    llm_prompt = summary_prompt(package1, package2, package3)
     
     try:
-        # Generate the prompt with the 3 packages
-        llm_prompt = summary_prompt(package1, package2, package3)
-        
-        # Use OpenAI LLM to generate summary
-        print("summarize_packages: using text LLM for summary")
+        # Use LLM to generate the summary
         response = get_text_llm().invoke([HumanMessage(content=llm_prompt)])
-        state["package_summary"] = response.content
+        llm_summary = response.content
         
-        print("Generated package summary:", response.content)
+        # Append the package details after the summary
+        package_details = "\n\nHere are the details for the available packages:\n"
         
+        for pkg in travel_packages:
+            package_details += f"Package {pkg['package_id']}: {pkg['package_summary']}\n"
+        
+        state["package_summary"] = f"{llm_summary}\n{package_details}"
     except Exception as e:
         print(f"Error generating package summary: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Fallback summary if LLM fails
-        fallback_summary = create_fallback_summary(travel_packages)
-        state["package_summary"] = fallback_summary
-
+        state["package_summary"] = create_fallback_summary(travel_packages)
+    
     state["current_node"] = "summarize_packages_node"
     return state
-
 
 def create_fallback_summary(packages):
     """Create a basic summary if LLM fails."""
