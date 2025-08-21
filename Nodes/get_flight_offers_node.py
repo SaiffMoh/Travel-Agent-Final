@@ -2,46 +2,17 @@ from Models.TravelSearchState import TravelSearchState
 import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from Utils.fetch_for_day import fetch_for_day
+from Utils.get_co2 import get_co2_emissions
 
 def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
     """Get flight offers from Amadeus API for 3 consecutive days and extract hotel dates."""
 
-    base_url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
-    headers = {
-        "Authorization": f"Bearer {state['access_token']}",
-        "Content-Type": "application/json"
-    }
-    
     # Use the body from format_body_node
     base_body = state.get("body", {})
     start_date_str = state.get("normalized_departure_date")
-    
-    # Validate required fields
-    if not start_date_str:
-        print("Error: No departure date found in state")
-        state["flight_offers_day_1"] = []
-        state["flight_offers_day_2"] = []
-        state["flight_offers_day_3"] = []
-        state["result"] = {"data": []}
-        return state
-        
-    if not base_body or not base_body.get("originDestinations"):
-        print("Error: No valid request body found in state")
-        state["flight_offers_day_1"] = []
-        state["flight_offers_day_2"] = []
-        state["flight_offers_day_3"] = []
-        state["result"] = {"data": []}
-        return state
-    
-    try:
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-    except ValueError as e:
-        print(f"Error parsing departure date {start_date_str}: {e}")
-        state["flight_offers_day_1"] = []
-        state["flight_offers_day_2"] = []
-        state["flight_offers_day_3"] = []
-        state["result"] = {"data": []}
-        return state
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
 
     # Prepare requests for 3 consecutive days
     bodies = []
@@ -63,72 +34,31 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
         body.setdefault("searchCriteria", {}).setdefault("maxFlightOffers", 1)
         bodies.append((day_offset + 1, query_date, body))
 
-    def fetch_for_day(day_info):
-        day_number, search_date, body = day_info
-        try:
-            # Add debug logging
-            print(f"DEBUG: Requesting flights for day {day_number} ({search_date})")
-            print(f"DEBUG: Request body keys: {list(body.keys()) if body else 'None'}")
-            
-            resp = requests.post(base_url, headers=headers, json=body, timeout=100)
-            
-            # Log response details for debugging
-            print(f"DEBUG: Response status for day {day_number}: {resp.status_code}")
-            
-            if resp.status_code == 400:
-                print(f"DEBUG: 400 error response for day {day_number}: {resp.text}")
-            
-            resp.raise_for_status()
-            data = resp.json()
-            flights = data.get("data", []) or []
-            
-            print(f"DEBUG: Found {len(flights)} flights for day {day_number}")
-            
-            # Add metadata to flights
-            for f in flights:
-                f["_search_date"] = search_date
-                f["_day_number"] = day_number
-            
-            return day_number, flights
-        except requests.exceptions.HTTPError as exc:
-            print(f"HTTP Error getting flight offers for day {day_number} ({search_date}): {exc}")
-            if hasattr(exc.response, 'text'):
-                print(f"Response body: {exc.response.text}")
-            return day_number, []
-        except Exception as exc:
-            print(f"Error getting flight offers for day {day_number} ({search_date}): {exc}")
-            return day_number, []
-
-    # Sequential search to avoid rate limiting (instead of parallel)
+    
+    # Parallel search across 3 days
     checkin_dates = []
     checkout_dates = []
     
-    print("DEBUG: Using sequential requests to avoid rate limiting")
-    
-    # Process requests sequentially with delay
-    for body_info in bodies:
-        day_number, flights = fetch_for_day(body_info)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(fetch_for_day, body_info, state["access_token"]) for body_info in bodies]
         
-        # Save flight offers by day
-        if day_number == 1:
-            state["flight_offers_day_1"] = flights
-        elif day_number == 2:
-            state["flight_offers_day_2"] = flights
-        elif day_number == 3:
-            state["flight_offers_day_3"] = flights
-        
-        # Extract hotel dates from flight offers
-        for flight in flights:
-            checkin_date, checkout_date = extract_hotel_dates_from_flight(flight)
-            if checkin_date and checkout_date:
-                checkin_dates.append(checkin_date)
-                checkout_dates.append(checkout_date)
-        
-        # Add delay between requests to avoid rate limiting
-        import time
-        if body_info != bodies[-1]:  # Don't delay after last request
-            time.sleep(1)  # 1 second delay between requests
-
+        for fut in as_completed(futures):
+            day_number, flights = fut.result()
+            
+            # Save flight offers by day
+            if day_number == 1:
+                state["flight_offers_day_1"] = flights
+            elif day_number == 2:
+                state["flight_offers_day_2"] = flights
+            elif day_number == 3:
+                state["flight_offers_day_3"] = flights
+            
+            # Extract hotel dates from flight offers
+            for flight in flights:
+                checkin_date, checkout_date = extract_hotel_dates_from_flight(flight)
+                if checkin_date and checkout_date:
+                    checkin_dates.append(checkin_date)
+                    checkout_dates.append(checkout_date)
 
     # Save extracted hotel dates
     state["checkin_date"] = checkin_dates
@@ -140,7 +70,11 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
         if state.get(day_key):
             all_results.extend(state[day_key])
     state["result"] = {"data": all_results}
-    
+
+    co2 = get_co2_emissions(state["flight_offers_day_1"], state["access_token"])
+
+    state["co2_emissions"] = co2
+
     return state
 
 

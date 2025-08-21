@@ -39,6 +39,9 @@ class TravelSearchState(TypedDict, total=False):
 	flight_offers_day_3: Optional[List[Dict[str, Any]]]
 	formatted_results: Optional[List[Dict[str, Any]]]
 
+	# CO2 Emissions
+	co2_emissions: Optional[List[Dict[str, Any]]]
+
 	# -------------------------
 	# Hotel search
 	# -------------------------
