@@ -41,6 +41,7 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
         checkout = duration_info["checkout"]
 
         if not checkin or not checkout:
+            print(f"No check-in or check-out dates for duration {duration_num}")
             return duration_num, []
 
         params = {
@@ -51,6 +52,7 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
         }
 
         try:
+            print(f"Fetching hotel offers for duration {duration_num}: {checkin} to {checkout}")
             response = requests.get(url, headers=headers, params=params, timeout=100)
             response.raise_for_status()
             data = response.json()
@@ -58,12 +60,65 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
 
             # Process hotel offers to find cheapest by room type
             processed_offers = process_hotel_offers(hotel_offers)
+            print(f"Found {len(processed_offers)} hotel offers for duration {duration_num}")
 
             return duration_num, processed_offers
 
         except Exception as e:
             print(f"Error getting hotel offers for duration {duration_num} ({checkin} to {checkout}): {e}")
             return duration_num, []
+
+    def process_hotel_offers(hotel_offers):
+        """Process hotel offers to find cheapest offer by room type for each hotel."""
+        processed = []
+
+        for hotel in hotel_offers:
+            hotel_info = {
+                "hotel": hotel.get("hotel", {}),
+                "available": hotel.get("available", True),
+                "best_offers": []
+            }
+
+            if not hotel_info["available"]:
+                processed.append(hotel_info)
+                continue
+
+            offers = hotel.get("offers", [])
+            if not offers:
+                processed.append(hotel_info)
+                continue
+
+            # Group offers by room type
+            offers_by_room_type = defaultdict(list)
+
+            for offer in offers:
+                room_info = offer.get("room", {})
+                room_type = room_info.get("type", "UNKNOWN")
+                offers_by_room_type[room_type].append(offer)
+
+            # Find cheapest offer for each room type
+            for room_type, room_offers in offers_by_room_type.items():
+                cheapest_offer = min(room_offers, key=lambda x: float(x.get("price", {}).get("total", float('inf'))))
+                # Capture the currency from the offer
+                currency = cheapest_offer.get("price", {}).get("currency", "EGP")
+                hotel_info["best_offers"].append({
+                    "room_type": room_type,
+                    "offer": cheapest_offer,
+                    "currency": currency  # Store the original currency
+                })
+
+            # Sort by price (cheapest first)
+            hotel_info["best_offers"].sort(key=lambda x: float(x["offer"].get("price", {}).get("total", float('inf'))))
+
+            processed.append(hotel_info)
+
+        # Sort hotels by their cheapest offer
+        processed.sort(key=lambda x: (
+            float(x["best_offers"][0]["offer"].get("price", {}).get("total", float('inf')))
+            if x["best_offers"] else float('inf')
+        ))
+
+        return processed
 
     # Parallel hotel search across 3 durations
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -84,52 +139,3 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
     state["hotel_offers"] = state.get("hotel_offers_duration_1", [])
 
     return state
-
-def process_hotel_offers(hotel_offers):
-    """Process hotel offers to find cheapest offer by room type for each hotel."""
-    processed = []
-
-    for hotel in hotel_offers:
-        hotel_info = {
-            "hotel": hotel.get("hotel", {}),
-            "available": hotel.get("available", True),
-            "best_offers": []
-        }
-
-        if not hotel_info["available"]:
-            processed.append(hotel_info)
-            continue
-
-        offers = hotel.get("offers", [])
-        if not offers:
-            processed.append(hotel_info)
-            continue
-
-        # Group offers by room type
-        offers_by_room_type = defaultdict(list)
-
-        for offer in offers:
-            room_info = offer.get("room", {})
-            room_type = room_info.get("type", "UNKNOWN")
-            offers_by_room_type[room_type].append(offer)
-
-        # Find cheapest offer for each room type
-        for room_type, room_offers in offers_by_room_type.items():
-            cheapest_offer = min(room_offers, key=lambda x: float(x.get("price", {}).get("total", float('inf'))))
-            hotel_info["best_offers"].append({
-                "room_type": room_type,
-                "offer": cheapest_offer
-            })
-
-        # Sort by price (cheapest first)
-        hotel_info["best_offers"].sort(key=lambda x: float(x["offer"].get("price", {}).get("total", float('inf'))))
-
-        processed.append(hotel_info)
-
-    # Sort hotels by their cheapest offer
-    processed.sort(key=lambda x: (
-        float(x["best_offers"][0]["offer"].get("price", {}).get("total", float('inf')))
-        if x["best_offers"] else float('inf')
-    ))
-
-    return processed

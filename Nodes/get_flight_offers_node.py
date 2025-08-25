@@ -2,6 +2,7 @@ from Models.TravelSearchState import TravelSearchState
 import requests
 import json
 from datetime import datetime, timedelta
+import copy
 
 def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
     """Get flight offers from Amadeus API for 3 consecutive days and extract hotel dates."""
@@ -38,7 +39,7 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
     bodies = []
     for day_offset in range(0, 3):
         query_date = (start_date + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        body = dict(base_body)  # Copy the formatted body
+        body = copy.deepcopy(base_body)  # Use deepcopy instead of dict()
         print(f"Preparing search for day {day_offset + 1}: {query_date}")
 
         if body.get("originDestinations"):
