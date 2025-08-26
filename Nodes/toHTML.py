@@ -30,72 +30,112 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
     
     html_parts = []
     
-    # Add CSS styles
+    # Add CSS styles - designed to work with both light and dark modes
     html_parts.append("""
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 20px; 
+            line-height: 1.6;
+        }
         .travel-summary { 
-            background-color: #f8f9fa; 
-            border-left: 4px solid #007bff; 
-            padding: 15px; 
-            margin-bottom: 25px; 
-            border-radius: 5px;
+            border: 1px solid var(--border-color, #ddd);
+            padding: 20px; 
+            margin-bottom: 30px; 
+            border-radius: 8px;
+            border-left: 4px solid var(--accent-color, #007bff);
         }
         .package-container { 
             margin-bottom: 30px; 
-            border: 1px solid #ddd; 
+            border: 1px solid var(--border-color, #ddd);
             border-radius: 8px; 
             overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .package-header { 
-            background-color: #007bff; 
-            color: white; 
-            padding: 15px; 
+            background: linear-gradient(135deg, var(--header-bg, #f8f9fa), var(--header-bg-alt, #e9ecef));
+            padding: 15px 20px; 
             font-size: 18px; 
-            font-weight: bold;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color, #ddd);
         }
-        .package-content { padding: 20px; }
-        .info-table { 
+        .package-content { padding: 25px; }
+        .data-table { 
             width: 100%; 
             border-collapse: collapse; 
-            margin-bottom: 20px;
+            margin-bottom: 25px;
+            border: 1px solid var(--border-color, #ddd);
+            border-radius: 6px;
+            overflow: hidden;
         }
-        .info-table th { 
-            background-color: #f1f3f4; 
-            padding: 12px; 
+        .data-table th { 
+            background: var(--table-header-bg, #f8f9fa);
+            padding: 12px 15px; 
             text-align: left; 
-            font-weight: bold;
-            border-bottom: 2px solid #dee2e6;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color, #ddd);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .info-table td { 
-            padding: 10px 12px; 
-            border-bottom: 1px solid #dee2e6;
+        .data-table td { 
+            padding: 12px 15px; 
+            border-bottom: 1px solid var(--border-light, #eee);
             vertical-align: top;
         }
-        .info-table tr:hover { background-color: #f8f9fa; }
-        .price-highlight { 
-            background-color: #d4edda; 
-            color: #155724; 
+        .data-table tr:nth-child(even) { 
+            background: var(--table-row-alt, #f9f9f9); 
+        }
+        .data-table tr:hover { 
+            background: var(--table-row-hover, #f0f0f0); 
+        }
+        .price-cell { 
             font-weight: bold; 
-            padding: 5px 8px; 
-            border-radius: 3px;
+            font-size: 16px;
         }
         .section-title { 
-            color: #495057; 
-            font-size: 16px; 
-            font-weight: bold; 
-            margin: 20px 0 10px 0; 
-            border-bottom: 2px solid #007bff;
-            padding-bottom: 5px;
+            font-size: 18px; 
+            font-weight: 600; 
+            margin: 25px 0 15px 0; 
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent-color, #007bff);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .flight-route { color: #007bff; font-weight: bold; }
-        .hotel-count { color: #28a745; font-weight: bold; }
         .no-packages { 
             text-align: center; 
             padding: 40px; 
-            color: #6c757d; 
             font-style: italic;
+            font-size: 16px;
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .available { 
+            background: var(--success-bg, #d4edda); 
+            color: var(--success-text, #155724); 
+        }
+        .route-info {
+            font-family: monospace;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        .duration-info {
+            font-size: 13px;
+            opacity: 0.8;
+        }
+        .hotel-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .room-description {
+            font-size: 13px;
+            opacity: 0.8;
+            line-height: 1.4;
         }
     </style>
     """)
@@ -104,7 +144,7 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
     if summary:
         html_parts.append(f"""
         <div class="travel-summary">
-            <h2>🌟 Your Travel Recommendations</h2>
+            <div class="section-title">🌟 Your Travel Recommendations</div>
             <div>{escape(summary).replace(chr(10), '<br>')}</div>
         </div>
         """)
@@ -143,42 +183,63 @@ def generate_package_html(package: dict, package_num: int) -> str:
         <div class="package-content">
     """]
     
-    # Pricing Summary
-    total_price = pricing.get("total_min_price", 0)
-    currency = pricing.get("currency", "EGP")
-    flight_price = pricing.get("flight_price", 0)
-    hotel_price = pricing.get("min_hotel_price", 0)
+    # Pricing Summary Table
+    html_parts.append(generate_pricing_table(pricing))
     
-    html_parts.append(f"""
-    <div class="section-title">💰 Pricing Summary</div>
-    <table class="info-table">
-        <tr>
-            <td><strong>Total Package Price</strong></td>
-            <td><span class="price-highlight">{total_price:,.2f} {currency}</span></td>
-        </tr>
-        <tr>
-            <td>Flight Price</td>
-            <td>{flight_price:,.2f} {currency}</td>
-        </tr>
-        <tr>
-            <td>Minimum Hotel Price</td>
-            <td>{hotel_price:,.2f} {currency}</td>
-        </tr>
-    </table>
-    """)
+    # Flight Information Table
+    html_parts.append(generate_flight_table(flight_info))
     
-    # Flight Information
-    html_parts.append(generate_flight_html(flight_info))
-    
-    # Hotel Information  
-    html_parts.append(generate_hotel_html(hotel_info))
+    # Hotel Information Table  
+    html_parts.append(generate_hotel_table(hotel_info))
     
     html_parts.append("</div></div>")
     
     return "".join(html_parts)
 
-def generate_flight_html(flight_info: dict) -> str:
-    """Generate HTML for flight information."""
+def generate_pricing_table(pricing: dict) -> str:
+    """Generate pricing summary table."""
+    
+    total_price = pricing.get("total_min_price", 0)
+    currency = pricing.get("currency", "EGP")
+    flight_price = pricing.get("flight_price", 0)
+    hotel_price = pricing.get("min_hotel_price", 0)
+    
+    return f"""
+    <div class="section-title">💰 Pricing Summary</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Component</th>
+                <th>Price</th>
+                <th>Currency</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Total Package</strong></td>
+                <td class="price-cell">{total_price:,.2f}</td>
+                <td>{currency}</td>
+                <td>Flight only (hotels separate)</td>
+            </tr>
+            <tr>
+                <td>Flight</td>
+                <td class="price-cell">{flight_price:,.2f}</td>
+                <td>{currency}</td>
+                <td>Round trip included</td>
+            </tr>
+            <tr>
+                <td>Hotel (Starting from)</td>
+                <td class="price-cell">{hotel_price:,.2f}</td>
+                <td>{currency}</td>
+                <td>Per night, varies by selection</td>
+            </tr>
+        </tbody>
+    </table>
+    """
+
+def generate_flight_table(flight_info: dict) -> str:
+    """Generate comprehensive flight information table."""
     
     html_parts = [f'<div class="section-title">✈️ Flight Details</div>']
     
@@ -189,22 +250,24 @@ def generate_flight_html(flight_info: dict) -> str:
     price = flight_info.get("price", 0)
     currency = flight_info.get("currency", "EGP")
     
-    html_parts.append('<table class="info-table">')
+    # Flight Overview Table
+    trip_type = summary.get("trip_type", "unknown").replace("_", " ").title()
     
-    # Basic flight info
-    trip_type = summary.get("trip_type", "unknown")
     html_parts.append(f"""
-    <tr>
-        <td><strong>Trip Type</strong></td>
-        <td>{trip_type.replace("_", " ").title()}</td>
-    </tr>
-    <tr>
-        <td><strong>Price</strong></td>
-        <td>{price:,.2f} {currency}</td>
-    </tr>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Flight Info</th>
+                <th>Details</th>
+                <th>Route</th>
+                <th>Duration</th>
+                <th>Stops</th>
+            </tr>
+        </thead>
+        <tbody>
     """)
     
-    # Outbound flight details
+    # Outbound flight
     outbound = summary.get("outbound")
     if outbound:
         departure = outbound.get("departure", {})
@@ -214,33 +277,23 @@ def generate_flight_html(flight_info: dict) -> str:
         
         dep_time = format_datetime(departure.get("time", ""))
         arr_time = format_datetime(arrival.get("time", ""))
-        
-        route_info = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
+        route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
         
         html_parts.append(f"""
         <tr>
-            <td><strong>Outbound Route</strong></td>
-            <td><span class="flight-route">{route_info}</span></td>
-        </tr>
-        <tr>
-            <td>Departure</td>
-            <td>{dep_time} (Terminal {departure.get('terminal', 'N/A')})</td>
-        </tr>
-        <tr>
-            <td>Arrival</td>
-            <td>{arr_time} (Terminal {arrival.get('terminal', 'N/A')})</td>
-        </tr>
-        <tr>
-            <td>Duration</td>
+            <td><strong>Outbound</strong><br><span class="duration-info">{dep_time}</span></td>
+            <td>
+                <div>Departure: Terminal {departure.get('terminal', 'N/A')}</div>
+                <div>Arrival: Terminal {arrival.get('terminal', 'N/A')}</div>
+                <div>Arrives: {arr_time}</div>
+            </td>
+            <td class="route-info">{route}</td>
             <td>{duration}</td>
-        </tr>
-        <tr>
-            <td>Stops</td>
             <td>{"Direct" if stops == 0 else f"{stops} stop{'s' if stops != 1 else ''}"}</td>
         </tr>
         """)
     
-    # Return flight details (if exists)
+    # Return flight
     return_flight = summary.get("return")
     if return_flight:
         departure = return_flight.get("departure", {})
@@ -250,37 +303,47 @@ def generate_flight_html(flight_info: dict) -> str:
         
         dep_time = format_datetime(departure.get("time", ""))
         arr_time = format_datetime(arrival.get("time", ""))
-        
-        route_info = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
+        route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
         
         html_parts.append(f"""
         <tr>
-            <td><strong>Return Route</strong></td>
-            <td><span class="flight-route">{route_info}</span></td>
-        </tr>
-        <tr>
-            <td>Return Departure</td>
-            <td>{dep_time} (Terminal {departure.get('terminal', 'N/A')})</td>
-        </tr>
-        <tr>
-            <td>Return Arrival</td>
-            <td>{arr_time} (Terminal {arrival.get('terminal', 'N/A')})</td>
-        </tr>
-        <tr>
-            <td>Return Duration</td>
+            <td><strong>Return</strong><br><span class="duration-info">{dep_time}</span></td>
+            <td>
+                <div>Departure: Terminal {departure.get('terminal', 'N/A')}</div>
+                <div>Arrival: Terminal {arrival.get('terminal', 'N/A')}</div>
+                <div>Arrives: {arr_time}</div>
+            </td>
+            <td class="route-info">{route}</td>
             <td>{duration}</td>
-        </tr>
-        <tr>
-            <td>Return Stops</td>
             <td>{"Direct" if stops == 0 else f"{stops} stop{'s' if stops != 1 else ''}"}</td>
         </tr>
         """)
     
-    html_parts.append('</table>')
+    html_parts.append(f"""
+        </tbody>
+    </table>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Trip Type</th>
+                <th>Total Price</th>
+                <th>Currency</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{trip_type}</td>
+                <td class="price-cell">{price:,.2f}</td>
+                <td>{currency}</td>
+            </tr>
+        </tbody>
+    </table>
+    """)
+    
     return "".join(html_parts)
 
-def generate_hotel_html(hotel_info: dict) -> str:
-    """Generate HTML for hotel information."""
+def generate_hotel_table(hotel_info: dict) -> str:
+    """Generate comprehensive hotel information table."""
     
     html_parts = [f'<div class="section-title">🏨 Hotel Options</div>']
     
@@ -293,49 +356,92 @@ def generate_hotel_html(hotel_info: dict) -> str:
     currency = hotel_info.get("currency", "EGP")
     top_options = hotel_info.get("top_options", [])
     
+    # Hotel Summary Table
     html_parts.append(f"""
-    <table class="info-table">
-        <tr>
-            <td><strong>Hotels Found</strong></td>
-            <td><span class="hotel-count">{total_found} total</span></td>
-        </tr>
-        <tr>
-            <td><strong>Available Hotels</strong></td>
-            <td><span class="hotel-count">{available_count} available</span></td>
-        </tr>
-        <tr>
-            <td><strong>Starting Price</strong></td>
-            <td><span class="price-highlight">From {min_price:,.2f} {currency}</span></td>
-        </tr>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Hotel Summary</th>
+                <th>Count</th>
+                <th>Starting Price</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Total Hotels Found</strong></td>
+                <td>{total_found}</td>
+                <td class="price-cell">{min_price:,.2f} {currency}</td>
+                <td><span class="status-badge available">{available_count} Available</span></td>
+            </tr>
+        </tbody>
     </table>
     """)
     
-    # Top hotel options
+    # Top hotel options table
     if top_options:
-        html_parts.append('<div class="section-title">🌟 Top Hotel Options</div>')
-        html_parts.append('<table class="info-table">')
-        html_parts.append('<tr><th>Hotel</th><th>Room Type</th><th>Price</th></tr>')
+        html_parts.append("""
+        <div class="section-title">🌟 Top Hotel Options</div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Hotel Name</th>
+                    <th>Room Type & Description</th>
+                    <th>Price per Night</th>
+                    <th>Currency</th>
+                    <th>Availability</th>
+                </tr>
+            </thead>
+            <tbody>
+        """)
         
-        for i, hotel in enumerate(top_options[:3], 1):  # Show top 3
+        for i, hotel in enumerate(top_options[:5], 1):  # Show top 5
             hotel_data = hotel.get("hotel", {})
             best_offers = hotel.get("best_offers", [])
+            is_available = hotel.get("available", True)
             
             hotel_name = hotel_data.get("name", f"Hotel {i}")
             
             if best_offers:
                 best_offer = best_offers[0]  # Cheapest offer
-                room_type = best_offer.get("room_type", "Standard")
+                room_type = best_offer.get("room_type", "Standard Room")
+                room_description = best_offer.get("description", "Standard accommodation")
                 offer_price = best_offer.get("offer", {}).get("price", {}).get("total", 0)
+                
+                # Clean up room description if it's too long
+                if len(room_description) > 100:
+                    room_description = room_description[:97] + "..."
+                
+                availability_badge = '<span class="status-badge available">Available</span>' if is_available else '<span class="status-badge">Not Available</span>'
                 
                 html_parts.append(f"""
                 <tr>
-                    <td><strong>{escape(hotel_name)}</strong></td>
-                    <td>{escape(room_type)}</td>
-                    <td>{float(offer_price):,.2f} {currency}</td>
+                    <td>
+                        <div class="hotel-name">{escape(hotel_name)}</div>
+                    </td>
+                    <td>
+                        <div><strong>{escape(room_type)}</strong></div>
+                        <div class="room-description">{escape(room_description)}</div>
+                    </td>
+                    <td class="price-cell">{float(offer_price):,.2f}</td>
+                    <td>{currency}</td>
+                    <td>{availability_badge}</td>
+                </tr>
+                """)
+            else:
+                html_parts.append(f"""
+                <tr>
+                    <td>
+                        <div class="hotel-name">{escape(hotel_name)}</div>
+                    </td>
+                    <td>No room details available</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td><span class="status-badge">No Offers</span></td>
                 </tr>
                 """)
         
-        html_parts.append('</table>')
+        html_parts.append('</tbody></table>')
     
     return "".join(html_parts)
 
@@ -348,7 +454,7 @@ def format_datetime(datetime_str: str) -> str:
         # Handle different datetime formats
         if "T" in datetime_str:
             dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
-            return dt.strftime("%Y-%m-%d %H:%M")
+            return dt.strftime("%b %d, %Y %H:%M")
         else:
             return datetime_str
     except:

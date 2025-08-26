@@ -1,10 +1,10 @@
 from Models.TravelSearchState import TravelSearchState
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+import time
 
 def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
-    """Get hotel offers for 3 durations in parallel using extracted flight dates."""
+    """Get hotel offers for 3 durations sequentially using extracted flight dates."""
     url = "https://test.api.amadeus.com/v3/shopping/hotel-offers"
     headers = {
         "Authorization": f"Bearer {state['access_token']}",
@@ -53,7 +53,7 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
 
         try:
             print(f"Fetching hotel offers for duration {duration_num}: {checkin} to {checkout}")
-            response = requests.get(url, headers=headers, params=params, timeout=100)
+            response = requests.get(url, headers=headers, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             hotel_offers = data.get("data", [])
@@ -64,6 +64,24 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
 
             return duration_num, processed_offers
 
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 429:
+                print(f"Rate limit exceeded for duration {duration_num}. Waiting before retrying...")
+                time.sleep(2)  # Wait 2 seconds before retrying
+                try:
+                    response = requests.get(url, headers=headers, params=params, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+                    hotel_offers = data.get("data", [])
+                    processed_offers = process_hotel_offers(hotel_offers)
+                    print(f"Found {len(processed_offers)} hotel offers for duration {duration_num} after retry")
+                    return duration_num, processed_offers
+                except Exception as retry_e:
+                    print(f"Retry failed for duration {duration_num} ({checkin} to {checkout}): {retry_e}")
+                    return duration_num, []
+            else:
+                print(f"Error getting hotel offers for duration {duration_num} ({checkin} to {checkout}): {e}")
+                return duration_num, []
         except Exception as e:
             print(f"Error getting hotel offers for duration {duration_num} ({checkin} to {checkout}): {e}")
             return duration_num, []
@@ -99,12 +117,11 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
             # Find cheapest offer for each room type
             for room_type, room_offers in offers_by_room_type.items():
                 cheapest_offer = min(room_offers, key=lambda x: float(x.get("price", {}).get("total", float('inf'))))
-                # Capture the currency from the offer
                 currency = cheapest_offer.get("price", {}).get("currency", "EGP")
                 hotel_info["best_offers"].append({
                     "room_type": room_type,
                     "offer": cheapest_offer,
-                    "currency": currency  # Store the original currency
+                    "currency": currency
                 })
 
             # Sort by price (cheapest first)
@@ -120,20 +137,20 @@ def get_hotel_offers_node(state: TravelSearchState) -> TravelSearchState:
 
         return processed
 
-    # Parallel hotel search across 3 durations
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(fetch_hotels_for_duration, duration_info) for duration_info in duration_requests]
+    # Sequential hotel search across 3 durations
+    for duration_info in duration_requests:
+        duration_number, offers = fetch_hotels_for_duration(duration_info)
 
-        for fut in as_completed(futures):
-            duration_number, offers = fut.result()
-
-            # Save hotel offers by duration
-            if duration_number == 1:
-                state["hotel_offers_duration_1"] = offers
-            elif duration_number == 2:
-                state["hotel_offers_duration_2"] = offers
-            elif duration_number == 3:
-                state["hotel_offers_duration_3"] = offers
+        # Save hotel offers by duration
+        if duration_number == 1:
+            state["hotel_offers_duration_1"] = offers
+        elif duration_number == 2:
+            state["hotel_offers_duration_2"] = offers
+        elif duration_number == 3:
+            state["hotel_offers_duration_3"] = offers
+        
+        # Add a small delay between requests to avoid rate limiting
+        time.sleep(1)  # Wait 1 second between requests
 
     # Keep legacy format for compatibility (use first duration)
     state["hotel_offers"] = state.get("hotel_offers_duration_1", [])
