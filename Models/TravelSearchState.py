@@ -34,6 +34,10 @@ class TravelSearchState(TypedDict, total=False):
     flight_offers_day_1: Optional[List[Dict[str, Any]]]
     flight_offers_day_2: Optional[List[Dict[str, Any]]]
     flight_offers_day_3: Optional[List[Dict[str, Any]]]
+    flight_offers_day_4: Optional[List[Dict[str, Any]]]
+    flight_offers_day_5: Optional[List[Dict[str, Any]]]
+    flight_offers_day_6: Optional[List[Dict[str, Any]]]
+    flight_offers_day_7: Optional[List[Dict[str, Any]]]
     formatted_results: Optional[List[Dict[str, Any]]]
     # -------------------------
     # Hotel search
@@ -47,6 +51,14 @@ class TravelSearchState(TypedDict, total=False):
     checkout_date_day_2: Optional[str]
     checkin_date_day_3: Optional[str]
     checkout_date_day_3: Optional[str]
+    checkin_date_day_4: Optional[str]
+    checkout_date_day_4: Optional[str]
+    checkin_date_day_5: Optional[str]
+    checkout_date_day_5: Optional[str]
+    checkin_date_day_6: Optional[str]
+    checkout_date_day_6: Optional[str]
+    checkin_date_day_7: Optional[str]
+    checkout_date_day_7: Optional[str]
     currency: Optional[str]
     room_quantity: Optional[int]
     adult: Optional[int]
@@ -54,8 +66,17 @@ class TravelSearchState(TypedDict, total=False):
     hotel_offers_duration_1: Optional[List[Dict[str, Any]]]
     hotel_offers_duration_2: Optional[List[Dict[str, Any]]]
     hotel_offers_duration_3: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_4: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_5: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_6: Optional[List[Dict[str, Any]]]
+    hotel_offers_duration_7: Optional[List[Dict[str, Any]]]
     hotel_offers: Optional[List[Dict[str, Any]]]
     travel_packages: List[Dict]
+    # -------------------------
+    # Company hotels (from Excel)
+    # -------------------------
+    company_hotels_path: Optional[str]
+    company_hotels: Optional[Dict[str, Any]]
     # -------------------------
     # Shared API fields
     # -------------------------

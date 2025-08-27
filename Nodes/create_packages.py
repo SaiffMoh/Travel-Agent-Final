@@ -3,112 +3,77 @@ from datetime import datetime
 from typing import Dict, List, Any
 
 def create_packages(state: TravelSearchState) -> TravelSearchState:
-    """Create 3 travel packages by matching flight offers with their corresponding hotel offers."""
-    
-    # Get flight offers for each day
-    flight_day_1 = state.get("flight_offers_day_1", [])
-    flight_day_2 = state.get("flight_offers_day_2", [])  
-    flight_day_3 = state.get("flight_offers_day_3", [])
-    
-    # Get hotel offers for each duration
-    hotel_duration_1 = state.get("hotel_offers_duration_1", [])
-    hotel_duration_2 = state.get("hotel_offers_duration_2", [])
-    hotel_duration_3 = state.get("hotel_offers_duration_3", [])
-    
-    # Debug: Log available data
-    print(f"create_packages: flights_day_1={len(flight_day_1)}, flights_day_2={len(flight_day_2)}, flights_day_3={len(flight_day_3)}")
-    print(f"create_packages: hotels_duration_1={len(hotel_duration_1)}, hotels_duration_2={len(hotel_duration_2)}, hotels_duration_3={len(hotel_duration_3)}")
-    
+    """Create 7 travel packages by matching flight offers with their corresponding hotel offers."""
+
+    flights_by_day = [state.get(f"flight_offers_day_{i}", []) for i in range(1, 8)]
+    hotels_by_duration = [state.get(f"hotel_offers_duration_{i}", []) for i in range(1, 8)]
+
     packages = []
-    
-    # Create Package 1: Day 1 flights + Duration 1 hotels
-    package_1 = create_single_package(
-        package_id=1,
-        flights=flight_day_1,
-        hotels=hotel_duration_1,
-        checkin_date=state.get("checkin_date_day_1"),
-        checkout_date=state.get("checkout_date_day_1")
-    )
-    if package_1:
-        packages.append(package_1)
-    
-    # Create Package 2: Day 2 flights + Duration 2 hotels
-    package_2 = create_single_package(
-        package_id=2,
-        flights=flight_day_2,
-        hotels=hotel_duration_2,
-        checkin_date=state.get("checkin_date_day_2"),
-        checkout_date=state.get("checkout_date_day_2")
-    )
-    if package_2:
-        packages.append(package_2)
-    
-    # Create Package 3: Day 3 flights + Duration 3 hotels
-    package_3 = create_single_package(
-        package_id=3,
-        flights=flight_day_3,
-        hotels=hotel_duration_3,
-        checkin_date=state.get("checkin_date_day_3"),
-        checkout_date=state.get("checkout_date_day_3")
-    )
-    if package_3:
-        packages.append(package_3)
-    
-    # Save packages to state
+
+    for day in range(1, 8):
+        package = create_single_package(
+            package_id=day,
+            flights=flights_by_day[day-1],
+            hotels=hotels_by_duration[day-1],
+            checkin_date=state.get(f"checkin_date_day_{day}"),
+            checkout_date=state.get(f"checkout_date_day_{day}")
+        )
+        if package:
+            packages.append(package)
+
     state["travel_packages"] = packages
-    try:
-        print(f"create_packages: built {len(packages)} packages")
-        for pkg in packages:
-            pricing = pkg.get("pricing", {}) if isinstance(pkg, dict) else {}
-            print(
-                f"package {pkg.get('package_id')}: total_min_price={pricing.get('total_min_price')} {pricing.get('currency')}"
-            )
-    except Exception as e:
-        print(f"create_packages: error while printing packages debug info: {e}")
-    
     return state
 
-def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels: List[Dict[str, Any]], 
+def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels: List[Dict[str, Any]],
                          checkin_date: str, checkout_date: str) -> Dict[str, Any]:
     """Create a single travel package from flight and hotel data."""
-    
-    # Debug: Log input data
-    print(f"create_single_package: package_id={package_id}, flights={len(flights)}, hotels={len(hotels)}, "
-          f"checkin_date={checkin_date}, checkout_date={checkout_date}")
-    
+
     if not flights or not checkin_date or not checkout_date:
-        print(f"Insufficient data for package {package_id}: flights={len(flights)}, "
-              f"checkin_date={checkin_date}, checkout_date={checkout_date}")
         return None
-    
+
     try:
-        # Use the first (cheapest) flight
-        flight = flights[0]
-        
-        # Extract flight information
-        flight_price = float(flight.get("price", {}).get("total", 0))
-        flight_currency = flight.get("price", {}).get("currency", "EGP")
-        search_date = flight.get("_search_date", "unknown")
-        
-        # Calculate trip duration
-        checkin_dt = datetime.strptime(checkin_date, "%Y-%m-%d")
-        checkout_dt = datetime.strptime(checkout_date, "%Y-%m-%d") 
-        duration_nights = (checkout_dt - checkin_dt).days
-        
-        # Process hotel data
-        available_hotels = [h for h in hotels if h.get("available", True) and h.get("best_offers")]
+        flight = flights[0] if flights else {}
+        flight_price = float(flight.get("price", {}).get("total", 0)) if flight else 0
+        flight_currency = flight.get("price", {}).get("currency", "EGP") if flight else "EGP"
+        search_date = flight.get("_search_date", "unknown") if flight else "unknown"
+
+        checkin_dt = datetime.strptime(checkin_date, "%Y-%m-%d") if checkin_date else None
+        checkout_dt = datetime.strptime(checkout_date, "%Y-%m-%d") if checkout_date else None
+        duration_nights = (checkout_dt - checkin_dt).days if checkin_dt and checkout_dt else 0
+
+        api_hotels = [h for h in hotels if h.get("source") == "amadeus_api"]
+        company_hotels = [h for h in hotels if h.get("source") == "company_excel"]
         total_hotels = len(hotels)
-        
-        # Find minimum hotel price and currency
+        available_hotels = [h for h in hotels if h.get("available", True) and h.get("best_offers")]
+
+        def get_hotel_price(hotel):
+            try:
+                if hotel.get("best_offers") and len(hotel["best_offers"]) > 0:
+                    return float(hotel["best_offers"][0]["offer"].get("price", {}).get("total", float('inf')))
+                return float('inf')
+            except Exception:
+                return float('inf')
+
+        api_hotels_sorted = sorted(api_hotels, key=get_hotel_price)
+        company_hotels_sorted = sorted(company_hotels, key=get_hotel_price)
+
         min_hotel_price = 0
-        hotel_currency = "EGP"  # Default, in case no hotels are available
-        if available_hotels and available_hotels[0].get("best_offers"):
-            min_hotel_price = float(available_hotels[0]["best_offers"][0]["offer"].get("price", {}).get("total", 0))
-            hotel_currency = available_hotels[0]["best_offers"][0].get("currency", "EGP")
-        
-        # Get flight summary
-        flight_summary = get_flight_summary(flight)
-        
+        hotel_currency = flight_currency
+        if available_hotels:
+            cheapest_hotel = min(available_hotels, key=get_hotel_price)
+            if cheapest_hotel.get("best_offers"):
+                min_hotel_price = float(cheapest_hotel["best_offers"][0]["offer"].get("price", {}).get("total", 0))
+                hotel_currency = cheapest_hotel["best_offers"][0].get("currency", flight_currency)
+
+        flight_offers = [
+            {
+                "offer": flight,
+                "price": float(flight.get("price", {}).get("total", 0)),
+                "currency": flight.get("price", {}).get("currency", "EGP"),
+                "summary": get_flight_summary(flight)
+            } for flight in flights
+        ]
+
         package = {
             "package_id": package_id,
             "search_date": search_date,
@@ -117,58 +82,64 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                 "checkout": checkout_date,
                 "duration_nights": duration_nights
             },
-            "flight": {
-                "offer": flight,
-                "price": flight_price,
-                "currency": flight_currency,
-                "summary": flight_summary
-            },
+            "flight_offers": flight_offers,
             "hotels": {
+                "api_hotels": {
+                    "total_found": len(api_hotels),
+                    "available_count": len([h for h in api_hotels if h.get("available", True)]),
+                    "top_options": api_hotels_sorted[:5],
+                    "min_price": min([get_hotel_price(h) for h in api_hotels] or [0]),
+                    "currency": hotel_currency
+                },
+                "company_hotels": {
+                    "total_found": len(company_hotels),
+                    "available_count": len([h for h in company_hotels if h.get("available", True)]),
+                    "top_options": company_hotels_sorted[:5],
+                    "min_price": min([get_hotel_price(h) for h in company_hotels] or [0]),
+                    "currency": hotel_currency
+                },
                 "total_found": total_hotels,
                 "available_count": len(available_hotels),
-                "top_options": available_hotels[:5],  # Top 5 cheapest
                 "min_price": min_hotel_price,
-                "currency": hotel_currency  # Use the hotel's original currency
+                "currency": hotel_currency
             },
             "pricing": {
                 "flight_price": flight_price,
-                "min_hotel_price": min_hotel_price, 
-                "total_min_price": flight_price,  # Only include flight price
-                "currency": flight_currency  # Total uses flight currency
+                "min_hotel_price": min_hotel_price,
+                "total_min_price": flight_price + min_hotel_price,
+                "currency": flight_currency
             },
             "package_summary": f"Package {package_id}: {duration_nights} nights, "
                               f"flight price {flight_price:,.2f} {flight_currency}, "
                               f"{len(available_hotels)} hotels available from {min_hotel_price:,.2f} {hotel_currency}"
         }
-        
+
         return package
-        
-    except Exception as e:
-        print(f"Error creating package {package_id}: {e}")
+
+    except Exception:
         return None
 
 def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
     """Create a summary of flight information."""
-    
+
     try:
         itineraries = flight.get("itineraries", [])
         if not itineraries:
             return {"error": "No itineraries found"}
-        
+
         summary = {
             "trip_type": "round_trip" if len(itineraries) > 1 else "one_way",
             "outbound": None,
             "return": None
         }
-        
-        # Outbound flight info
+
         outbound = itineraries[0]
         outbound_segments = outbound.get("segments", [])
-        
+
         if outbound_segments:
             first_segment = outbound_segments[0]
             last_segment = outbound_segments[-1]
-            
+
             summary["outbound"] = {
                 "departure": {
                     "airport": first_segment.get("departure", {}).get("iataCode", ""),
@@ -183,16 +154,15 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
                 "duration": outbound.get("duration", ""),
                 "stops": len(outbound_segments) - 1
             }
-        
-        # Return flight info (if exists)
+
         if len(itineraries) > 1:
             return_itinerary = itineraries[1]
             return_segments = return_itinerary.get("segments", [])
-            
+
             if return_segments:
                 first_return = return_segments[0]
                 last_return = return_segments[-1]
-                
+
                 summary["return"] = {
                     "departure": {
                         "airport": first_return.get("departure", {}).get("iataCode", ""),
@@ -207,9 +177,8 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
                     "duration": return_itinerary.get("duration", ""),
                     "stops": len(return_segments) - 1
                 }
-        
+
         return summary
-        
-    except Exception as e:
-        print(f"Error creating flight summary: {e}")
-        return {"error": f"Failed to create summary: {str(e)}"}
+
+    except Exception:
+        return {"error": "Failed to create summary"}

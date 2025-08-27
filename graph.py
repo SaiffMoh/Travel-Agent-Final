@@ -9,6 +9,7 @@ from Nodes.get_flight_offers_node import get_flight_offers_node
 from Nodes.get_hotel_offers_node import get_hotel_offers_node
 from Nodes.llm_conversation_node import llm_conversation_node
 from Nodes.normalize_info_node import normalize_info_node
+from Nodes.parse_company_hotels_node import parse_company_hotels_node
 from Nodes.summarize_packages import summarize_packages
 from Nodes.toHTML import toHTML
 from Utils.decisions import check_info_complete
@@ -20,6 +21,7 @@ def create_travel_graph():
     graph.add_node("llm_conversation", llm_conversation_node)
     graph.add_node("analyze_conversation", analyze_conversation_node)
     graph.add_node("normalize_info", normalize_info_node)
+    graph.add_node("parse_company_hotels", parse_company_hotels_node)
     graph.add_node("format_body", format_body_node)
     graph.add_node("get_access_token", get_access_token_node)
     graph.add_node("get_flight_offers", get_flight_offers_node)
@@ -29,7 +31,7 @@ def create_travel_graph():
     graph.add_node("summarize_packages", summarize_packages)
     graph.add_node("to_html", toHTML)
 
-    # Flow according to your sequence
+    # Flow
     graph.add_edge("llm_conversation", "analyze_conversation")
     graph.add_conditional_edges(
         "analyze_conversation",
@@ -38,11 +40,12 @@ def create_travel_graph():
             "flights": "normalize_info",
             "hotels": "normalize_info",
             "packages": "normalize_info",
-            "selection_request": "normalize_info", 
+            "selection_request": "normalize_info",
             "ask_followup": END
         }
     )
-    graph.add_edge("normalize_info", "format_body")
+    graph.add_edge("normalize_info", "parse_company_hotels")
+    graph.add_edge("parse_company_hotels", "format_body")
     graph.add_edge("format_body", "get_access_token")
     graph.add_edge("get_access_token", "get_flight_offers")
     graph.add_edge("get_flight_offers", "get_city_ids")

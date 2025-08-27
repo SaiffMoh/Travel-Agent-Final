@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import copy
 
 def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
-    """Get flight offers from Amadeus API for 3 consecutive days and extract hotel dates."""
+    """Get flight offers from Amadeus API for 7 consecutive days and extract hotel dates."""
     base_url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
     headers = {
         "Authorization": f"Bearer {state['access_token']}",
@@ -35,9 +35,9 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
     else:
         print("ERROR: No base body found! This will cause all flights to fail.")
 
-    # Prepare requests for 3 consecutive days
+    # Prepare requests for 7 consecutive days
     bodies = []
-    for day_offset in range(0, 3):
+    for day_offset in range(0, 7):
         query_date = (start_date + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         body = copy.deepcopy(base_body)  # Use deepcopy instead of dict()
         print(f"Preparing search for day {day_offset + 1}: {query_date}")
@@ -57,11 +57,13 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
             print(f"  WARNING: No originDestinations in body!")
             print(f"  Body structure: {body}")
 
-        # Set max offers to 1 for cheapest option
-        body.setdefault("searchCriteria", {}).setdefault("maxFlightOffers", 1)
+        # Set max offers to 3
+        if "searchCriteria" not in body:
+            body["searchCriteria"] = {}
+        body["searchCriteria"]["maxFlightOffers"] = 3
         bodies.append((day_offset + 1, query_date, body))
 
-    # Sequential search across 3 days
+    # Sequential search across 7 days
     for day_number, search_date, body in bodies:
         print(f"\n--- SEARCHING DAY {day_number} ({search_date}) ---")
         print(f"Request URL: {base_url}")
@@ -103,16 +105,11 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
                 print(f"  Full response: {data}")
 
             # Save flight offers by day
-            if day_number == 1:
-                state["flight_offers_day_1"] = flights
-            elif day_number == 2:
-                state["flight_offers_day_2"] = flights
-            elif day_number == 3:
-                state["flight_offers_day_3"] = flights
+            state[f"flight_offers_day_{day_number}"] = flights
 
             # Extract hotel dates from flight offers for this specific day
             if flights:
-                flight = flights[0]  # Use first (cheapest) flight
+                flight = flights[0]  # Use first flight offer
                 print(f"\n=== EXTRACTING HOTEL DATES FOR DAY {day_number} ===")
                 print(f"Flight search date: {flight.get('_search_date')}")
 
@@ -140,7 +137,7 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
             traceback.print_exc()
 
     # Additional debugging for empty results
-    for day in [1, 2, 3]:
+    for day in range(1, 8):
         day_flights = state.get(f"flight_offers_day_{day}", [])
         checkin_key = f"checkin_date_day_{day}"
         checkout_key = f"checkout_date_day_{day}"
@@ -150,7 +147,7 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
 
     # Final debug summary
     print(f"\n=== FINAL HOTEL DATES SUMMARY ===")
-    for day in [1, 2, 3]:
+    for day in range(1, 8):
         checkin_key = f"checkin_date_day_{day}"
         checkout_key = f"checkout_date_day_{day}"
         if checkin_key in state and checkout_key in state:
@@ -160,8 +157,9 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
 
     # Keep legacy format for compatibility (all flights combined)
     all_results = []
-    for day_key in ["flight_offers_day_1", "flight_offers_day_2", "flight_offers_day_3"]:
-        if state.get(day_key):
+    for i in range(1, 8):
+        day_key = f"flight_offers_day_{i}"
+        if day_key in state:
             all_results.extend(state[day_key])
     state["result"] = {"data": all_results}
 
@@ -200,7 +198,7 @@ def extract_hotel_dates_from_flight(flight_offer, duration, day_number):
     Args:
         flight_offer: Flight offer data
         duration: Trip duration in nights
-        day_number: Which day this flight corresponds to (1, 2, or 3)
+        day_number: Which day this flight corresponds to (1-7)
 
     Returns:
         tuple: (checkin_date, checkout_date) as strings in YYYY-MM-DD format
