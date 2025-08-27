@@ -189,7 +189,7 @@ class VisaRAGSystem:
 
 def main():
     # Set up API key (replace with your actual key)
-    os.environ["OPENAI_API_KEY"] = "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"  # Replace with valid key
+    os.environ["OPENAI_API_KEY"] = "OPENAI_API_KEY"  # Replace with valid key
     
     config = VisaRAGConfig()
     rag_system = VisaRAGSystem(config)
