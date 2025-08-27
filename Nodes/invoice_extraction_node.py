@@ -26,15 +26,19 @@ CRITICAL INSTRUCTIONS:
 3. For dates and times, if not explicitly stated, infer from context or use logical defaults.
 4. For flight details, if any segment is missing, try to derive it from other available information.
 
-REQUIRED FIELDS - These MUST be filled in with non-null values:
-- invoice_number (look for 'Invoice #', 'INV-', or similar patterns - use 'N/A' if not found)
-- subsidiary_name (use company name or 'Unknown' if not found)
-- vendor_name (use travel_agency or company name if not found)
-- vendor_type (infer from context: 'travel_agency', 'airline', 'hotel', 'car_rental', or 'supplier')
-- invoice_state (infer from context: 'draft', 'pending', 'under_finance_review', 'approved', 'paid', 'rejected')
-- currency (3-letter currency code, e.g., 'USD', 'EUR', 'EGP' - default to 'USD' if not found)
-- issued_date (use current date if not found)
-- submission_date (use issued_date + 7 days if not found)
+EXTRACTION RULES:
+1. ONLY extract information that is explicitly present in the document
+2. DO NOT infer or guess any values that are not clearly stated
+3. For invoice numbers, look for these exact patterns (case insensitive):
+   - 'Invoice #', 'INV-', 'No.', 'Number:', 'Ref:', 'Reference:'
+4. For vendor types, only use if explicitly mentioned:
+   - 'travel_agency' - Only if 'travel agency' or similar is mentioned
+   - 'airline' - Only if airline name is present
+   - 'hotel' - Only if hotel name is present
+   - 'car_rental' - Only if car rental company is mentioned
+   - 'supplier' - Only if supplier is mentioned
+5. For invoice state, only include if explicitly stated in the document
+6. For currency, only include if a currency symbol or code is present
 
 For EACH flight in flight_details, these fields are MANDATORY:
 - airline (infer from flight number or carrier code if not explicit)
@@ -81,92 +85,47 @@ class InvoiceExtractor:
             raise Exception(f"Failed to read PDF {pdf_path}: {str(e)}")
 
     def clean_llm_output(self, parsed: dict) -> dict:
-        """Clean and validate the LLM output with strict non-null handling."""
-        from datetime import datetime, timedelta
-        
-        def clean_value(value: Any, field_name: str = '') -> Any:
-            # Handle null/empty values with smart defaults
+        """Clean the LLM output by only including fields that have actual values."""
+        def clean_value(value: Any) -> Any:
             if value is None or value == "" or value == "N/A" or value == "null":
-                # Provide smart defaults based on field type/name
-                if 'date' in field_name:
-                    if field_name == 'submission_date' and 'issued_date' in parsed:
-                        try:
-                            issued = datetime.fromisoformat(str(parsed['issued_date']).replace('Z', '+00:00'))
-                            return (issued + timedelta(days=7)).isoformat()
-                        except:
-                            return datetime.now().isoformat()
-                    return datetime.now().isoformat()
-                elif any(f in field_name for f in ['amount', 'price', 'total', 'tax']):
-                    return "0.00"
-                elif field_name == 'service_type':
-                    return "Economy"
-                elif field_name == 'vendor_type':
-                    # Try to infer vendor type from context
-                    if 'travel' in str(parsed.get('travel_agency', '')).lower() or 'travel' in str(parsed.get('vendor_name', '')).lower():
-                        return 'travel_agency'
-                    elif 'air' in str(parsed.get('vendor_name', '')).lower() or any('airline' in str(d.get('airline', '')).lower() for d in parsed.get('flight_details', [])):
-                        return 'airline'
-                    elif 'hotel' in str(parsed.get('vendor_name', '')).lower() or 'resort' in str(parsed.get('vendor_name', '')).lower():
-                        return 'hotel'
-                    elif 'car' in str(parsed.get('vendor_name', '')).lower() or 'rental' in str(parsed.get('vendor_name', '')).lower():
-                        return 'car_rental'
-                    return 'supplier'  # Default to supplier if can't determine
-                elif field_name == 'invoice_state':
-                    return 'pending'  # Default state
-                elif field_name == 'currency':
-                    # Look for currency in amounts or use default USD
-                    if 'total_amount' in parsed and isinstance(parsed['total_amount'], str):
-                        if '€' in parsed['total_amount']:
-                            return 'EUR'
-                        elif '£' in parsed['total_amount']:
-                            return 'GBP'
-                        elif 'EGP' in parsed['total_amount'] or 'ج.م' in parsed['total_amount']:
-                            return 'EGP'
-                    return 'USD'  # Default currency
-                elif field_name == 'vendor_name' and 'travel_agency' in parsed:
-                    return parsed['travel_agency']  # Use travel_agency as fallback for vendor_name
-                elif field_name in ['airline', 'origin', 'destination'] and parsed.get('flight_details'):
-                    # Try to infer from other flights if available
-                    for flight in parsed.get('flight_details', []):
-                        if field_name in flight and flight[field_name]:
-                            return flight[field_name]
-                return "Unknown"
+                return None
                 
             if isinstance(value, dict):
-                if "default" in value and len(value) == 1:
-                    return clean_value(value["default"], field_name)
-                elif all(k in value for k in ("type", "description")):
-                    return "Unknown"
-                else:
-                    return {k: clean_value(v, k) for k, v in value.items()}
-                    
-            elif isinstance(value, list):
-                return [clean_value(v, f"{field_name}_item") for v in value]
+                # Clean nested dictionaries
+                cleaned = {}
+                for k, v in value.items():
+                    cleaned_v = clean_value(v)
+                    if cleaned_v is not None:
+                        cleaned[k] = cleaned_v
+                return cleaned if cleaned else None
                 
-            elif isinstance(value, (int, float)):
-                return str(round(float(value), 2)) if field_name in ['amount', 'price', 'total', 'tax'] else str(value)
+            elif isinstance(value, list):
+                # Clean lists, removing None values
+                cleaned = [clean_value(v) for v in value]
+                return [v for v in cleaned if v is not None] or None
                 
             elif isinstance(value, str):
                 value = value.strip()
                 if not value or value.lower() in ['null', 'none', 'n/a']:
-                    return "Unknown"
+                    return None
                 # Clean up common issues in text fields
                 value = re.sub(r'\s+', ' ', value)  # Normalize whitespace
-                value = value.strip('"\'')  # Remove surrounding quotes
-                return value
+                value = value.strip('\'"')  # Remove surrounding quotes
+                return value if value else None
                 
             return value
-
-        # Initial cleaning of all values with field names
+            
+        # Clean the entire parsed dictionary
         cleaned = {}
         for k, v in parsed.items():
-            cleaned_value = clean_value(v, k)
-            if cleaned_value is not None:  # Only include non-None values
-                cleaned[k] = cleaned_value
+            cleaned_v = clean_value(v)
+            if cleaned_v is not None:
+                cleaned[k] = cleaned_v
                 
-        # Ensure required fields exist with proper defaults
-        cleaned.setdefault("flight_details", [])
-        
+        # Special handling for flight_details - ensure it's a list if it exists
+        if 'flight_details' in cleaned and not isinstance(cleaned['flight_details'], list):
+            del cleaned['flight_details']
+                
         # Clean and validate invoice number if it exists
         if 'invoice_number' in cleaned and cleaned['invoice_number']:
             # Remove common prefixes/suffixes and clean up the number
@@ -175,30 +134,19 @@ class InvoiceExtractor:
             for prefix in ['Invoice', 'INV', 'No.', '#', ':']:
                 if invoice_num.startswith(prefix):
                     invoice_num = invoice_num[len(prefix):].strip()
-            cleaned['invoice_number'] = invoice_num or 'N/A'
-        else:
-            cleaned['invoice_number'] = 'N/A'
+            cleaned['invoice_number'] = invoice_num if invoice_num else None
         
-        # Set default values for new fields if not provided
-        if 'vendor_type' not in cleaned:
-            cleaned['vendor_type'] = 'supplier'  # Default to supplier
+        # Ensure flight_details is always a list
+        if 'flight_details' not in cleaned:
+            cleaned['flight_details'] = []
             
-        if 'invoice_state' not in cleaned:
-            cleaned['invoice_state'] = 'pending'  # Default state
-            
-        if 'currency' not in cleaned:
-            cleaned['currency'] = 'USD'  # Default currency
-            
-        # Set vendor_name from travel_agency if not provided
-        if 'vendor_name' not in cleaned and 'travel_agency' in cleaned:
-            cleaned['vendor_name'] = cleaned['travel_agency']
-        
-        # Handle dates - ensure they're in ISO format or set to current date if missing
+        # Handle date fields
         current_date = datetime.now().isoformat()
-        for date_field in ["issued_date", "submission_date"]:
-            if date_field not in cleaned or not cleaned[date_field]:
+        date_fields = ['issued_date', 'due_date']
+        for date_field in date_fields:
+            if date_field in cleaned and (cleaned[date_field] is None or cleaned[date_field] == ''):
                 cleaned[date_field] = current_date
-            elif isinstance(cleaned[date_field], datetime):
+            elif date_field in cleaned and isinstance(cleaned[date_field], datetime):
                 cleaned[date_field] = cleaned[date_field].isoformat()
         
         # Ensure currency is uppercase and valid
@@ -368,9 +316,9 @@ class InvoiceExtractor:
                 # Save the extracted data
                 json_path = self.output_dir / f"{pdf_name}.json"
                 with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(invoice_data.dict(), f, indent=2, default=str)
+                    json.dump(invoice_data.model_dump(), f, indent=2, default=str)
                 
-                return invoice_data.dict(), str(json_path)
+                return invoice_data.model_dump(), str(json_path)
             
             return None, "Failed to extract data from PDF"
             

@@ -1,0 +1,39 @@
+{
+  "invoice_number": "BSNMJXK9FH71EKAAE3478VSJ10",
+  "issued_date": "2025-04-27T03:00:00",
+  "submission_date": "2025-04-27T12:10:55",
+  "vendor_type": "travel_agency",
+  "vendor_name": "Excel Travel",
+  "subsidiary_name": "El Sewedy Electric",
+  "invoice_state": "valid",
+  "currency": "EGP",
+  "travel_agency": "Excel Travel",
+  "flight_details": [
+    {
+      "service_type": "Economy",
+      "airline": "Egypt Air",
+      "departure_date": "2025-04-25T00:00:00",
+      "arrival_date": "2025-05-08T00:00:00",
+      "origin": "Cairo, Cairo Int.",
+      "destination": "Kinshasa, Kinshasa Int.",
+      "passenger": "Aboelatta Ahmed",
+      "ticket_number": "3472553804",
+      "amount": "9006.00",
+      "tax": "49.00",
+      "total_amount": "9055.00"
+    },
+    {
+      "service_type": "Economy",
+      "airline": "Egypt Air",
+      "departure_date": "2025-04-25T00:00:00",
+      "arrival_date": "2025-05-08T00:00:00",
+      "origin": "Kinshasa, Kinshasa Int.",
+      "destination": "Cairo, Cairo Int.",
+      "passenger": "Aboelatta Ahmed",
+      "ticket_number": "3472553804",
+      "amount": "16107.00",
+      "tax": "0.00",
+      "total_amount": "16107.00"
+    }
+  ]
+}
