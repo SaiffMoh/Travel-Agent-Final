@@ -1,8 +1,6 @@
-import os
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass
-
 from langchain_community.document_loaders import PyPDFLoader  # Reverted to PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -13,11 +11,13 @@ from langchain_openai import ChatOpenAI
 import arabic_reshaper
 from bidi.algorithm import get_display
 from langdetect import detect
-
+from dotenv import load_dotenv
+import os
+load_dotenv('.env')
 @dataclass
 class VisaRAGConfig:
     """Configuration for the Visa RAG system"""
-    pdf_directory: str = "/Users/mazinsaleh/Desktop/Travel-Agent-Final/visa_pdfs"
+    pdf_directory: str = "visa_pdfs"
     chunk_size: int = 1000
     chunk_overlap: int = 300
     top_k: int = 5
@@ -36,7 +36,7 @@ class VisaRAGSystem:
             chunk_overlap=config.chunk_overlap,
             separators=["\n\n", "\n", " ", ""]
         )
-        self.llm = ChatOpenAI(model=config.llm_model, temperature=0.0)
+        self.llm = ChatOpenAI(model=config.llm_model, temperature=0.0,api_key= os.getenv("OPENAI_API_KEY"))
         self.vector_store = None
         self._load_or_create_vector_store()
     
@@ -189,8 +189,7 @@ class VisaRAGSystem:
 
 def main():
     # Set up API key (replace with your actual key)
-    os.environ["OPENAI_API_KEY"] = "OPENAI_API_KEY"  # Replace with valid key
-    
+  
     config = VisaRAGConfig()
     rag_system = VisaRAGSystem(config)
     
