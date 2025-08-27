@@ -27,8 +27,12 @@ CRITICAL INSTRUCTIONS:
 4. For flight details, if any segment is missing, try to derive it from other available information.
 
 REQUIRED FIELDS - These MUST be filled in with non-null values:
+- invoice_number (look for 'Invoice #', 'INV-', or similar patterns - use 'N/A' if not found)
 - subsidiary_name (use company name or 'Unknown' if not found)
-- travel_agency (use 'Unknown' if not found)
+- vendor_name (use travel_agency or company name if not found)
+- vendor_type (infer from context: 'travel_agency', 'airline', 'hotel', 'car_rental', or 'supplier')
+- invoice_state (infer from context: 'draft', 'pending', 'under_finance_review', 'approved', 'paid', 'rejected')
+- currency (3-letter currency code, e.g., 'USD', 'EUR', 'EGP' - default to 'USD' if not found)
 - issued_date (use current date if not found)
 - submission_date (use issued_date + 7 days if not found)
 
@@ -47,6 +51,9 @@ RULES:
 4. If a numeric field is missing, use 0.00 for amounts
 5. If a text field is missing, use 'Unknown' or derive from context
 6. For flight segments, ensure all times and dates are consistent
+7. For vendor_type, infer from context (e.g., if 'travel agency' is mentioned, use 'travel_agency')
+8. For invoice_state, if nothing indicates otherwise, default to 'pending'
+9. For currency, look for currency symbols (€, $, £, EGP, etc.) or 3-letter codes in the document
 
 Return ONLY a valid JSON that matches this schema:
 {schema_json}
@@ -93,6 +100,31 @@ class InvoiceExtractor:
                     return "0.00"
                 elif field_name == 'service_type':
                     return "Economy"
+                elif field_name == 'vendor_type':
+                    # Try to infer vendor type from context
+                    if 'travel' in str(parsed.get('travel_agency', '')).lower() or 'travel' in str(parsed.get('vendor_name', '')).lower():
+                        return 'travel_agency'
+                    elif 'air' in str(parsed.get('vendor_name', '')).lower() or any('airline' in str(d.get('airline', '')).lower() for d in parsed.get('flight_details', [])):
+                        return 'airline'
+                    elif 'hotel' in str(parsed.get('vendor_name', '')).lower() or 'resort' in str(parsed.get('vendor_name', '')).lower():
+                        return 'hotel'
+                    elif 'car' in str(parsed.get('vendor_name', '')).lower() or 'rental' in str(parsed.get('vendor_name', '')).lower():
+                        return 'car_rental'
+                    return 'supplier'  # Default to supplier if can't determine
+                elif field_name == 'invoice_state':
+                    return 'pending'  # Default state
+                elif field_name == 'currency':
+                    # Look for currency in amounts or use default USD
+                    if 'total_amount' in parsed and isinstance(parsed['total_amount'], str):
+                        if '€' in parsed['total_amount']:
+                            return 'EUR'
+                        elif '£' in parsed['total_amount']:
+                            return 'GBP'
+                        elif 'EGP' in parsed['total_amount'] or 'ج.م' in parsed['total_amount']:
+                            return 'EGP'
+                    return 'USD'  # Default currency
+                elif field_name == 'vendor_name' and 'travel_agency' in parsed:
+                    return parsed['travel_agency']  # Use travel_agency as fallback for vendor_name
                 elif field_name in ['airline', 'origin', 'destination'] and parsed.get('flight_details'):
                     # Try to infer from other flights if available
                     for flight in parsed.get('flight_details', []):
@@ -132,8 +164,34 @@ class InvoiceExtractor:
             if cleaned_value is not None:  # Only include non-None values
                 cleaned[k] = cleaned_value
                 
-        # Ensure required fields exist
+        # Ensure required fields exist with proper defaults
         cleaned.setdefault("flight_details", [])
+        
+        # Clean and validate invoice number if it exists
+        if 'invoice_number' in cleaned and cleaned['invoice_number']:
+            # Remove common prefixes/suffixes and clean up the number
+            invoice_num = str(cleaned['invoice_number']).strip()
+            # Remove common prefixes/suffixes
+            for prefix in ['Invoice', 'INV', 'No.', '#', ':']:
+                if invoice_num.startswith(prefix):
+                    invoice_num = invoice_num[len(prefix):].strip()
+            cleaned['invoice_number'] = invoice_num or 'N/A'
+        else:
+            cleaned['invoice_number'] = 'N/A'
+        
+        # Set default values for new fields if not provided
+        if 'vendor_type' not in cleaned:
+            cleaned['vendor_type'] = 'supplier'  # Default to supplier
+            
+        if 'invoice_state' not in cleaned:
+            cleaned['invoice_state'] = 'pending'  # Default state
+            
+        if 'currency' not in cleaned:
+            cleaned['currency'] = 'USD'  # Default currency
+            
+        # Set vendor_name from travel_agency if not provided
+        if 'vendor_name' not in cleaned and 'travel_agency' in cleaned:
+            cleaned['vendor_name'] = cleaned['travel_agency']
         
         # Handle dates - ensure they're in ISO format or set to current date if missing
         current_date = datetime.now().isoformat()
@@ -142,6 +200,12 @@ class InvoiceExtractor:
                 cleaned[date_field] = current_date
             elif isinstance(cleaned[date_field], datetime):
                 cleaned[date_field] = cleaned[date_field].isoformat()
+        
+        # Ensure currency is uppercase and valid
+        if 'currency' in cleaned and isinstance(cleaned['currency'], str):
+            cleaned['currency'] = cleaned['currency'].strip().upper()
+            if len(cleaned['currency']) != 3 or not cleaned['currency'].isalpha():
+                cleaned['currency'] = 'USD'  # Fallback to USD if invalid
         
         return cleaned
 
