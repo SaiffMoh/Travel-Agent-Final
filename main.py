@@ -1,8 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import json
 from dotenv import load_dotenv
 from langgraph.errors import GraphRecursionError
+from pathlib import Path
+import shutil
+import uuid
+from Nodes.invoice_extraction_node import InvoiceExtractor
 from typing import List
 import traceback
 import logging
@@ -12,7 +17,6 @@ from Models.ChatRequest import ChatRequest
 from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +45,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize invoice extractor
+invoice_extractor = InvoiceExtractor()
+
+# Setup directories for invoice uploads
+UPLOAD_DIR = Path("uploads")
+PDF_DIR = UPLOAD_DIR / "pdfs"
+JSON_DIR = UPLOAD_DIR / "json_outputs"
+
+# Create directories if they don't exist
+for directory in [PDF_DIR, JSON_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
 
 graph = create_travel_graph().compile()
 
@@ -86,13 +102,13 @@ async def chat_endpoint(request: ChatRequest):
                 detail=f"Missing API keys: {', '.join(missing_keys)}"
             )
 
-        # ✅ Use global conversation store
+        # Use global conversation store
         conversation_history = conversation_store.get_conversation(request.thread_id)
-        print(f"✓ Got conversation history: {len(conversation_history)} messages")
+        print(f"Got conversation history: {len(conversation_history)} messages")
         
         conversation_store.add_message(request.thread_id, "user", user_message)
         updated_conversation = conversation_store.get_conversation(request.thread_id)
-        print(f"✓ Updated conversation: {len(updated_conversation)} messages")
+        print(f"Updated conversation: {len(updated_conversation)} messages")
 
         # Initialize state for LangGraph
         state = {
@@ -121,15 +137,15 @@ async def chat_endpoint(request: ChatRequest):
         # Run LangGraph workflow
         result = graph.invoke(state)
         
-        print("✓ LangGraph execution completed")
+        print("LangGraph execution completed")
         try:
             print("Result keys:", list(result.keys()))
             if result.get("travel_packages"):
-                print(f"✓ travel_packages present: {len(result.get('travel_packages', []))}")
+                print(f"travel_packages present: {len(result.get('travel_packages', []))}")
             if result.get("travel_packages_html"):
-                print(f"✓ travel_packages_html present: {len(result.get('travel_packages_html', []))}")
+                print(f"travel_packages_html present: {len(result.get('travel_packages_html', []))}")
             if result.get("package_summary"):
-                print("✓ package_summary present")
+                print("package_summary present")
         except Exception as _:
             print("(debug) unable to print result keys")
 
@@ -153,7 +169,7 @@ async def chat_endpoint(request: ChatRequest):
 
         # If we have travel packages HTML, return it so the user can see packages
         if result.get("travel_packages_html"):
-            print(f"✓ Returning {len(result['travel_packages_html'])} travel packages (HTML)")
+            print(f"Returning {len(result['travel_packages_html'])} travel packages (HTML)")
             return result["travel_packages_html"]
 
         # Build flight results if search completed
@@ -207,7 +223,7 @@ async def chat_endpoint(request: ChatRequest):
             status_code=500,
             detail="Internal server error while processing request"
         )
-# Keep your other endpoints...
+
 @app.post("/api/reset/{thread_id}")
 async def reset_conversation(thread_id: str):
     """Reset conversation history for a specific thread"""
@@ -222,6 +238,87 @@ async def get_active_threads():
     print(f"Getting active threads: {len(threads)} found")
     return {"threads": threads, "count": len(threads)}
 
+# Invoice API Endpoints
+@app.post("/api/invoices/upload")
+async def upload_invoice(files: list[UploadFile]):
+    """
+    Handle multiple PDF uploads for invoice processing.
+    
+    Args:
+        files: List of PDF files to process
+        
+    Returns:
+        List of processing results for each file
+    """
+    results = []
+    for file in files:
+        result = await process_single_pdf(file)
+        results.append(result)
+    return results
+
+async def process_single_pdf(file: UploadFile) -> dict:
+    """Process a single PDF file and return the result."""
+    temp_file_path = None
+    try:
+        # Validate file type (PDF only)
+        if not file.filename.lower().endswith('.pdf'):
+            return {
+                "filename": file.filename,
+                "status": "error",
+                "error": "Only PDF files are supported"
+            }
+        
+        # Generate unique filename
+        filename = f"{uuid.uuid4()}.pdf"
+        temp_file_path = PDF_DIR / filename
+        
+        # Save uploaded PDF
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Process PDF
+        text = invoice_extractor.extract_text_from_pdf(str(temp_file_path))
+        
+        # Extract data
+        invoice_data, raw_output = invoice_extractor.extract_invoice_data(text)
+        if not invoice_data:
+            return {
+                "filename": file.filename,
+                "status": "error",
+                "error": "Failed to extract data from PDF"
+            }
+        
+        # Convert invoice data to dict and handle datetime serialization
+        invoice_dict = invoice_data.dict()
+        
+        # Save extracted data
+        json_filename = f"{temp_file_path.stem}.json"
+        json_path = JSON_DIR / json_filename
+        with open(json_path, "w") as f:
+            json.dump(invoice_dict, f, indent=2, default=str)
+        
+        # Convert invoice data to dict with proper serialization
+        response_data = {
+            "filename": file.filename,
+            "status": "success",
+            "data": json.loads(json.dumps(invoice_data.dict(), default=str)),
+            "json_path": str(json_path)
+        }
+        return response_data
+        
+    except Exception as e:
+        return {
+            "filename": file.filename if file else "unknown",
+            "status": "error",
+            "error": str(e)
+        }
+    finally:
+        # Clean up temporary file
+        if temp_file_path and temp_file_path.exists():
+            try:
+                temp_file_path.unlink()
+            except Exception as e:
+                print(f"Error cleaning up file {temp_file_path}: {e}")
 
 # if __name__ == "__main__":
 #     print("Starting server...")

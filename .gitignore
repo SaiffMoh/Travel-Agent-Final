@@ -198,6 +198,38 @@ cython_debug/
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
+
+# Invoice processing
+uploads/
+invoice_outputs/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Local development
+*.log
+*.sqlite
+*.sqlite3
+
+# VS Code
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
 .cursorignore
 .cursorindexingignore
 
