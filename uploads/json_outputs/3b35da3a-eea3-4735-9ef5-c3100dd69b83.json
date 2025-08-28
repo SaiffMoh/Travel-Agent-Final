@@ -1,0 +1,39 @@
+{
+  "invoice_number": "TIN2500018393",
+  "issued_date": "2025-05-19T00:00:00",
+  "submission_date": "2025-05-19T08:13:39",
+  "vendor_type": "travel_agency",
+  "vendor_name": "Excel Travel",
+  "subsidiary_name": "El Sewedy Electric",
+  "invoice_state": "valid",
+  "currency": "EGP",
+  "travel_agency": "Excel Travel",
+  "flight_details": [
+    {
+      "service_type": "Unknown",
+      "airline": "Egypt Air",
+      "departure_date": "2025-05-18T00:00:00",
+      "arrival_date": "2025-05-22T00:00:00",
+      "origin": "Cairo",
+      "destination": "Algiers",
+      "passenger": "Mr Saeed Ahmed",
+      "ticket_number": "3472665475",
+      "amount": "15221.0",
+      "tax": "49.00",
+      "total_amount": "15172.0"
+    },
+    {
+      "service_type": "Unknown",
+      "airline": "Egypt Air",
+      "departure_date": "2025-05-18T00:00:00",
+      "arrival_date": "2025-05-22T00:00:00",
+      "origin": "Cairo",
+      "destination": "Algiers",
+      "passenger": "Mr Saeed Ahmed",
+      "ticket_number": "3472665475",
+      "amount": "13139.0",
+      "tax": "0.00",
+      "total_amount": "13139.0"
+    }
+  ]
+}

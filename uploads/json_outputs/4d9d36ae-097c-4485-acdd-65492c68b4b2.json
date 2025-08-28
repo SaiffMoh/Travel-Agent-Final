@@ -1,0 +1,39 @@
+{
+  "invoice_number": "WFFD08DAAY912SG8WGD9RHVJ10",
+  "issued_date": "2025-05-18T00:00:00",
+  "submission_date": "2025-05-18T13:10:47",
+  "vendor_type": "travel_agency",
+  "vendor_name": "Excel Travel",
+  "subsidiary_name": "El Sewedy Electric",
+  "invoice_state": "valid",
+  "currency": "EGP",
+  "travel_agency": "Excel Travel",
+  "flight_details": [
+    {
+      "service_type": "Economy",
+      "airline": "Egypt Air",
+      "departure_date": "2025-05-13T00:00:00",
+      "arrival_date": "2025-05-17T00:00:00",
+      "origin": "Cairo",
+      "destination": "London",
+      "passenger": "Mr Shokry Ahmed",
+      "ticket_number": "3472627982",
+      "amount": "70032.00",
+      "tax": "112.00",
+      "total_amount": "70144.00"
+    },
+    {
+      "service_type": "Economy",
+      "airline": "Egypt Air",
+      "departure_date": "2025-05-13T00:00:00",
+      "arrival_date": "2025-05-17T00:00:00",
+      "origin": "London",
+      "destination": "Cairo",
+      "passenger": "Mr Shokry Ahmed",
+      "ticket_number": "3472627982",
+      "amount": "34063.00",
+      "tax": "0.00",
+      "total_amount": "34063.00"
+    }
+  ]
+}

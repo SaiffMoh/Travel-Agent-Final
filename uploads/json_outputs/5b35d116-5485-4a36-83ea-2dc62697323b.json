@@ -1,0 +1,39 @@
+{
+  "invoice_number": "CR2500002644",
+  "issued_date": "2025-05-18T00:00:00Z",
+  "submission_date": "2025-05-18T09:55:02Z",
+  "vendor_type": "travel_agency",
+  "vendor_name": "Excel Travel",
+  "subsidiary_name": "El Sewedy Electric",
+  "invoice_state": "valid",
+  "currency": "EGP",
+  "travel_agency": "Excel Travel",
+  "flight_details": [
+    {
+      "service_type": "Unknown",
+      "airline": "Egypt Air",
+      "departure_date": "2025-04-08T00:00:00Z",
+      "arrival_date": "2025-04-18T00:00:00Z",
+      "origin": "Cairo, Cairo Int.",
+      "destination": "Johannesburg, O. Reginald Tambo Int.",
+      "passenger": "Mrs Derafa Nadia",
+      "ticket_number": "3472451815",
+      "amount": "44994.0",
+      "tax": "0.00",
+      "total_amount": "44994.0"
+    },
+    {
+      "service_type": "Unknown",
+      "airline": "Egypt Air",
+      "departure_date": "2025-04-08T00:00:00Z",
+      "arrival_date": "2025-04-18T00:00:00Z",
+      "origin": "Johannesburg, O. Reginald Tambo Int.",
+      "destination": "Cairo, Cairo Int.",
+      "passenger": "Mrs Derafa Nadia",
+      "ticket_number": "3472451815",
+      "amount": "19583.0",
+      "tax": "0.00",
+      "total_amount": "19583.0"
+    }
+  ]
+}

@@ -46,7 +46,7 @@ class InvoiceData(BaseModel):
         examples=["draft", "pending", "under_finance_review", "approved", "paid", "rejected"]
     )
     currency: Optional[str] = Field(
-        default="USD",
+        default=None,
         description="Currency code for all monetary amounts in the invoice (e.g., USD, EUR, EGP)",
         pattern=r"^[A-Z]{3}$"
     )

@@ -46,7 +46,7 @@ For EACH flight in flight_details, these fields are MANDATORY:
 - destination (city/airport code, required)
 - departure_date (required, infer from context if needed)
 - arrival_date (required, must be after departure_date)
-- service_type (infer from class if not specified, default to 'Economy')
+- service_type (infer from class)
 
 RULES:
 1. NEVER return null for any field - always provide a meaningful value
@@ -85,9 +85,10 @@ class InvoiceExtractor:
             raise Exception(f"Failed to read PDF {pdf_path}: {str(e)}")
 
     def clean_llm_output(self, parsed: dict) -> dict:
-        """Clean the LLM output by only including fields that have actual values."""
+        """Clean the LLM output by only including fields that have actual values from the PDF."""
         def clean_value(value: Any) -> Any:
-            if value is None or value == "" or value == "N/A" or value == "null":
+            # Return None for any falsy or placeholder values
+            if value is None or value == "" or value == "N/A" or value == "null" or value == "Unknown":
                 return None
                 
             if isinstance(value, dict):
@@ -106,7 +107,7 @@ class InvoiceExtractor:
                 
             elif isinstance(value, str):
                 value = value.strip()
-                if not value or value.lower() in ['null', 'none', 'n/a']:
+                if not value or value.lower() in ['null', 'none', 'n/a', 'unknown']:
                     return None
                 # Clean up common issues in text fields
                 value = re.sub(r'\s+', ' ', value)  # Normalize whitespace
@@ -118,42 +119,50 @@ class InvoiceExtractor:
         # Clean the entire parsed dictionary
         cleaned = {}
         for k, v in parsed.items():
-            cleaned_v = clean_value(v)
-            if cleaned_v is not None:
-                cleaned[k] = cleaned_v
-                
-        # Special handling for flight_details - ensure it's a list if it exists
-        if 'flight_details' in cleaned and not isinstance(cleaned['flight_details'], list):
-            del cleaned['flight_details']
-                
-        # Clean and validate invoice number if it exists
-        if 'invoice_number' in cleaned and cleaned['invoice_number']:
-            # Remove common prefixes/suffixes and clean up the number
-            invoice_num = str(cleaned['invoice_number']).strip()
-            # Remove common prefixes/suffixes
+            if k == 'flight_details' and isinstance(v, list):
+                # Special handling for flight details
+                cleaned_flights = []
+                for flight in v:
+                    if not isinstance(flight, dict):
+                        continue
+                    cleaned_flight = {}
+                    for fk, fv in flight.items():
+                        cleaned_fv = clean_value(fv)
+                        if cleaned_fv is not None:
+                            cleaned_flight[fk] = cleaned_fv
+                    if cleaned_flight:  # Only add flight if it has data
+                        cleaned_flights.append(cleaned_flight)
+                if cleaned_flights:  # Only add flight_details if there are flights
+                    cleaned['flight_details'] = cleaned_flights
+            else:
+                cleaned_v = clean_value(v)
+                if cleaned_v is not None:
+                    cleaned[k] = cleaned_v
+        
+        # Clean invoice number if it exists
+        if 'invoice_number' in cleaned and isinstance(cleaned['invoice_number'], str):
+            invoice_num = cleaned['invoice_number'].strip()
+            # Remove common prefixes/suffixes 
             for prefix in ['Invoice', 'INV', 'No.', '#', ':']:
                 if invoice_num.startswith(prefix):
                     invoice_num = invoice_num[len(prefix):].strip()
-            cleaned['invoice_number'] = invoice_num if invoice_num else None
+            cleaned['invoice_number'] = invoice_num if invoice_num and invoice_num != 'Unknown' else None
         
-        # Ensure flight_details is always a list
-        if 'flight_details' not in cleaned:
-            cleaned['flight_details'] = []
+        # Remove empty flight details
+        if 'flight_details' in cleaned and not cleaned['flight_details']:
+            del cleaned['flight_details']
             
-        # Handle date fields
-        current_date = datetime.now().isoformat()
-        date_fields = ['issued_date', 'due_date']
+        
+        date_fields = ['issued_date', 'due_date', 'departure_date', 'arrival_date']
         for date_field in date_fields:
             if date_field in cleaned and (cleaned[date_field] is None or cleaned[date_field] == ''):
-                cleaned[date_field] = current_date
-            elif date_field in cleaned and isinstance(cleaned[date_field], datetime):
-                cleaned[date_field] = cleaned[date_field].isoformat()
+                del cleaned[date_field]
         
-        # Ensure currency is uppercase and valid
+        # Only keep currency if it's a valid 3-letter code
         if 'currency' in cleaned and isinstance(cleaned['currency'], str):
             cleaned['currency'] = cleaned['currency'].strip().upper()
             if len(cleaned['currency']) != 3 or not cleaned['currency'].isalpha():
-                cleaned['currency'] = 'USD'  # Fallback to USD if invalid
+                del cleaned['currency']
         
         return cleaned
 
@@ -189,21 +198,17 @@ class InvoiceExtractor:
                     if not isinstance(flight, dict):
                         continue
                     
-                    # Ensure all required flight fields exist
-                    clean_flight = {
-                        'airline': flight.get('airline', 'Unknown'),
-                        'origin': flight.get('origin', 'Unknown'),
-                        'destination': flight.get('destination', 'Unknown'),
-                        'departure_date': flight.get('departure_date', datetime.now().isoformat()),
-                        'arrival_date': flight.get('arrival_date', datetime.now().isoformat()),
-                        'service_type': flight.get('service_type', 'Economy'),
-                        'passenger': flight.get('passenger', 'Unknown'),
-                        'ticket_number': flight.get('ticket_number', ''),
-                        'amount': flight.get('amount', '0.00'),
-                        'tax': flight.get('tax', '0.00'),
-                        'total_amount': flight.get('total_amount', '0.00')
-                    }
-                    cleaned_flights.append(clean_flight)
+                    # Only include flight fields that exist in the data
+                    clean_flight = {}
+                    flight_fields = ['airline', 'origin', 'destination', 'departure_date', 
+                                  'arrival_date', 'service_type', 'passenger', 'ticket_number',
+                                  'amount', 'tax', 'total_amount']
+                    for field in flight_fields:
+                        if field in flight and flight[field] not in [None, '', 'Unknown']:
+                            clean_flight[field] = flight[field]
+                    
+                    if clean_flight:  # Only add flight if it has data
+                        cleaned_flights.append(clean_flight)
                 
                 cleaned["flight_details"] = cleaned_flights
                 
@@ -214,14 +219,6 @@ class InvoiceExtractor:
                 
                 # Convert to Pydantic model with validation
                 invoice = InvoiceData(**cleaned)
-                
-                # Final check for null values
-                null_fields = self.find_null_fields(invoice.model_dump())
-                if null_fields:
-                    print(f"⚠️ Warning: Found null fields after cleaning: {null_fields}")
-                    # Apply final cleanup for any remaining nulls
-                    for field in null_fields:
-                        self._clean_null_field(invoice, field)
                 
                 return invoice, cleaned_reply
                 
@@ -236,66 +233,6 @@ class InvoiceExtractor:
                 print(f"Raw response: {reply}")
             return None, f"Processing error: {str(e)}"
     
-    def _clean_null_field(self, obj: Any, field_path: str) -> None:
-        """Clean a specific null field by setting a default value."""
-        if not field_path:
-            return
-            
-        parts = field_path.split('.')
-        current = obj
-        
-        try:
-            # Navigate to the parent of the field
-            for part in parts[:-1]:
-                if '[' in part and ']' in part:  # Handle list indices
-                    list_part, idx = part.split('[')
-                    idx = int(idx[:-1])
-                    current = getattr(current, list_part)[idx]
-                else:
-                    current = getattr(current, part)
-            
-            # Get the field name (last part)
-            field_name = parts[-1]
-            
-            # Set default value based on field type/name
-            if 'date' in field_name.lower():
-                default = datetime.now().isoformat()
-            elif any(f in field_name.lower() for f in ['amount', 'price', 'total', 'tax']):
-                default = '0.00'
-            elif field_name == 'service_type':
-                default = 'Economy'
-            elif field_name in ['airline', 'origin', 'destination', 'passenger']:
-                default = 'Unknown'
-            else:
-                default = ''
-            
-            # Set the field value
-            if hasattr(current, field_name):
-                setattr(current, field_name, default)
-                
-        except (AttributeError, IndexError, ValueError) as e:
-            print(f"⚠️ Warning: Could not clean field {field_path}: {str(e)}")
-    
-    def find_null_fields(self, data: Any, path: str = "") -> List[str]:
-        """Recursively find all null/None values in a nested dictionary."""
-        null_fields = []
-
-        if isinstance(data, dict):
-            for k, v in data.items():
-                new_path = f"{path}.{k}" if path else k
-                if v is None:
-                    null_fields.append(new_path)
-                elif isinstance(v, (dict, list)):
-                    null_fields.extend(self.find_null_fields(v, new_path))
-
-        elif isinstance(data, list):
-            for i, item in enumerate(data):
-                if item is None:
-                    null_fields.append(f"{path}[{i}]")
-                else:
-                    null_fields.extend(self.find_null_fields(item, f"{path}[{i}]"))
-
-        return null_fields
 
     def process_pdf(self, pdf_path: str) -> Tuple[Optional[dict], str]:
         """Process a single PDF file and return extracted data."""
