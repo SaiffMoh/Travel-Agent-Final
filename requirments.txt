@@ -11,7 +11,8 @@ pydantic
 pandas
 openpyxl
 faiss-cpu
-PyMuPDF
-sentence_transformers
 python-bidi
 pypdf
+python-multipart>=0.0.5
+pdfplumber>=0.6.2
+python-dateutil>=2.8.2

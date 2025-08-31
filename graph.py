@@ -1,5 +1,3 @@
-# graph.py - Clean graph structure only
-
 from langgraph.graph import StateGraph, END
 from Models.TravelSearchState import TravelSearchState
 from Nodes.analyze_conversation_node import analyze_conversation_node
@@ -16,6 +14,7 @@ from Nodes.summarize_packages import summarize_packages
 from Nodes.toHTML import toHTML
 from Nodes.visa_rag_node import visa_rag_node
 from Nodes.general_conversation_node import general_conversation_node
+from Nodes.invoice_extraction_node import invoice_extraction_node
 from Utils.decisions import check_info_complete
 from Utils.routing import smart_router
 
@@ -37,6 +36,7 @@ def create_travel_graph():
     graph.add_node("summarize_packages", summarize_packages)
     graph.add_node("to_html", toHTML)
     graph.add_node("visa_rag", visa_rag_node)
+    graph.add_node("invoice_extraction", invoice_extraction_node)
 
     # Entry point and main routing
     graph.set_entry_point("llm_conversation")
@@ -46,8 +46,9 @@ def create_travel_graph():
         smart_router,
         {
             "travel_flow": "analyze_conversation",
-            "visa_rag": "visa_rag", 
+            "visa_rag": "visa_rag",
             "general_conversation": "general_conversation",
+            "invoice_extraction": "invoice_extraction",
             "need_more_info": END
         }
     )
@@ -55,14 +56,15 @@ def create_travel_graph():
     # End points for non-travel flows
     graph.add_edge("visa_rag", END)
     graph.add_edge("general_conversation", END)
+    graph.add_edge("invoice_extraction", END)
     
-    # Travel flow - analyze conversation then proceed to search
+    # Travel flow
     graph.add_conditional_edges(
         "analyze_conversation",
         check_info_complete,
         {
             "flights": "normalize_info",
-            "hotels": "normalize_info", 
+            "hotels": "normalize_info",
             "packages": "normalize_info",
             "selection_request": "normalize_info",
             "ask_followup": END

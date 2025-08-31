@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -12,6 +12,11 @@ from Models.ChatRequest import ChatRequest
 from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
+from Nodes.invoice_extraction_node import invoice_extraction_node
+from pathlib import Path
+import shutil
+import uuid
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,6 +42,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Define directory structure
+DATA_DIR = Path("data")
+UPLOAD_DIR = DATA_DIR / "uploads"
+PDF_DIR = UPLOAD_DIR / "pdfs"
+JSON_DIR = UPLOAD_DIR / "json_outputs"
+
+# Create directories if they don't exist
+for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
+
 graph = create_travel_graph().compile()
 
 @app.get("/")
@@ -53,8 +68,6 @@ async def health():
             "missing_keys": missing_keys
         }
     return {"status": "healthy", "message": "All API keys configured"}
-
-# Updated chat endpoint section in main.py
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -78,7 +91,6 @@ async def chat_endpoint(request: ChatRequest):
                 detail=f"Missing API keys: {', '.join(missing_keys)}"
             )
 
-        # Load conversation and previous state
         conversation_history = conversation_store.get_conversation(request.thread_id)
         print(f"✓ Got conversation history: {len(conversation_history)} messages")
         
@@ -86,11 +98,8 @@ async def chat_endpoint(request: ChatRequest):
         updated_conversation = conversation_store.get_conversation(request.thread_id)
         print(f"✓ Updated conversation: {len(updated_conversation)} messages")
 
-        # Load previous state if it exists
         previous_state = conversation_store.get_state(request.thread_id) or {}
         
-        # Build initial state - don't automatically carry over travel_search_completed
-        # Let the smart router decide based on user intent
         state = {
             "thread_id": request.thread_id,
             "conversation": updated_conversation,
@@ -104,13 +113,14 @@ async def chat_endpoint(request: ChatRequest):
             "current_node": "llm_conversation",
             "followup_count": previous_state.get("followup_count", 0),
             "request_type": previous_state.get("request_type", "flights"),
-            # Only carry over travel_search_completed if it's relevant to current intent
             "travel_search_completed": previous_state.get("travel_search_completed", False),
-            "visa_info_html": None
+            "visa_info_html": None,
+            "invoice_uploaded": previous_state.get("invoice_uploaded", False),
+            "invoice_pdf_path": previous_state.get("invoice_pdf_path"),
+            "extracted_invoice_data": previous_state.get("extracted_invoice_data"),
+            "invoice_html": previous_state.get("invoice_html")
         }
         
-        # Conditionally carry over previous travel data
-        # The smart router will reset these if a new search is detected
         travel_fields = ["departure_date", "origin", "destination", "cabin_class", "duration", "travel_packages_html"]
         for field in travel_fields:
             if field in previous_state:
@@ -120,12 +130,11 @@ async def chat_endpoint(request: ChatRequest):
             print("ERROR: Graph was not compiled at startup")
             raise HTTPException(status_code=500, detail="Graph compilation failed")
 
-        # Run LangGraph workflow with enhanced routing
+        print(f"Executing graph with state: {state}")
         result = graph.invoke(state)
         
         print("✓ LangGraph execution completed")
         
-        # Enhanced debugging
         try:
             print("Result keys:", list(result.keys()))
             if result.get("travel_packages"):
@@ -136,11 +145,14 @@ async def chat_endpoint(request: ChatRequest):
                 print("✓ visa_info_html present")
             if result.get("package_summary"):
                 print("✓ package_summary present")
+            if result.get("extracted_invoice_data"):
+                print("✓ extracted_invoice_data present")
+            if result.get("invoice_html"):
+                print("✓ invoice_html present")
             print(f"Travel search completed: {result.get('travel_search_completed', False)}")
         except Exception as _:
             print("(debug) unable to print result keys")
 
-        # Save state for persistence - include all relevant fields
         state_to_save = {
             "departure_date": result.get("departure_date"),
             "origin": result.get("origin"),
@@ -150,11 +162,14 @@ async def chat_endpoint(request: ChatRequest):
             "followup_count": result.get("followup_count", 0),
             "request_type": result.get("request_type", "flights"),
             "travel_search_completed": result.get("travel_search_completed", False),
-            "travel_packages_html": result.get("travel_packages_html")
+            "travel_packages_html": result.get("travel_packages_html"),
+            "invoice_uploaded": result.get("invoice_uploaded", False),
+            "invoice_pdf_path": result.get("invoice_pdf_path"),
+            "extracted_invoice_data": result.get("extracted_invoice_data"),
+            "invoice_html": result.get("invoice_html")
         }
         conversation_store.save_state(request.thread_id, state_to_save)
 
-        # Build extracted info for response
         extracted_info = ExtractedInfo(
             departure_date=result.get("departure_date"),
             origin=result.get("origin"),
@@ -164,31 +179,25 @@ async def chat_endpoint(request: ChatRequest):
             duration=result.get("duration")
         )
 
-        # Check for visa info
         if result.get("visa_info_html"):
             print("✓ Returning visa_info_html")
             conversation_store.add_message(request.thread_id, "assistant", "Visa requirements provided")
             return result["visa_info_html"]
 
-        # If still collecting information, return follow-up question
         if result.get("needs_followup", True):
             assistant_message = result.get("followup_question", "Could you provide more details about your flight?")
             conversation_store.add_message(request.thread_id, "assistant", assistant_message)
             html_content = question_to_html(assistant_message, extracted_info)
             return html_content
 
-        # If we have travel packages HTML, return it and mark search complete
         if result.get("travel_packages_html"):
             print(f"✓ Returning {len(result['travel_packages_html'])} travel packages (HTML)")
-            # Update the saved state to mark search as completed
             state_to_save["travel_search_completed"] = True
             conversation_store.save_state(request.thread_id, state_to_save)
-            
             assistant_message = "Here are your travel packages:"
             conversation_store.add_message(request.thread_id, "assistant", assistant_message)
             return result["travel_packages_html"]
 
-        # Build flight results if search completed (fallback)
         flights = []
         if result.get("formatted_results"):
             flights = [
@@ -253,3 +262,118 @@ async def get_active_threads():
     threads = conversation_store.get_all_threads()
     print(f"Getting active threads: {len(threads)} found")
     return {"threads": threads, "count": len(threads)}
+
+@app.post("/api/invoices/upload")
+async def upload_invoice(files: List[UploadFile], thread_id: str = None):
+    """
+    Handle multiple PDF uploads for invoice processing and return HTML table.
+    
+    Args:
+        files: List of PDF files to process
+        thread_id: Thread ID to associate with the upload
+        
+    Returns:
+        HTML table or followup question
+    """
+    if not thread_id:
+        print("ERROR: Missing thread_id")
+        raise HTTPException(status_code=422, detail="thread_id is required")
+
+    if not files:
+        print("ERROR: No files provided")
+        assistant_message = "No files uploaded. Please upload at least one PDF."
+        conversation_store.add_message(thread_id, "assistant", assistant_message)
+        html_content = question_to_html(assistant_message, ExtractedInfo())
+        return [{
+            "filename": "none",
+            "status": "error",
+            "error": "No files uploaded",
+            "html": html_content
+        }]
+
+    results = []
+    for file in files:
+        temp_file_path = None
+        try:
+            if not file.filename.lower().endswith('.pdf'):
+                assistant_message = "Only PDF files are supported"
+                conversation_store.add_message(thread_id, "assistant", assistant_message)
+                html_content = question_to_html(assistant_message, ExtractedInfo())
+                results.append({
+                    "filename": file.filename,
+                    "status": "error",
+                    "error": "Only PDF files are supported",
+                    "html": html_content
+                })
+                continue
+            
+            filename = f"{uuid.uuid4()}_{file.filename}"
+            temp_file_path = PDF_DIR / filename
+            
+            with open(temp_file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            conversation_history = conversation_store.get_conversation(thread_id)
+            previous_state = conversation_store.get_state(thread_id) or {}
+            
+            state = {
+                "thread_id": thread_id,
+                "conversation": conversation_history,
+                "current_message": f"Processing uploaded invoice: {file.filename}",
+                "user_message": f"Processing uploaded invoice: {file.filename}",
+                "needs_followup": True,
+                "followup_question": None,
+                "current_node": "invoice_extraction",
+                "invoice_uploaded": True,
+                "invoice_pdf_path": str(temp_file_path),
+                "extracted_invoice_data": None,
+                "invoice_html": None
+            }
+            
+            print(f"Invoking graph for invoice processing: {file.filename}")
+            result = graph.invoke(state)
+            print(f"Graph result for {file.filename}: {result}")
+            
+            state_to_save = {
+                "invoice_uploaded": result.get("invoice_uploaded", False),
+                "invoice_pdf_path": result.get("invoice_pdf_path"),
+                "extracted_invoice_data": result.get("extracted_invoice_data"),
+                "invoice_html": result.get("invoice_html")
+            }
+            conversation_store.save_state(thread_id, state_to_save)
+
+            assistant_message = result.get("followup_question", "Invoice processed.")
+            conversation_store.add_message(thread_id, "assistant", assistant_message)
+
+            if result.get("invoice_html"):
+                print(f"✓ Returning invoice_html for {file.filename}")
+                return result["invoice_html"]
+
+            html_content = question_to_html(assistant_message, ExtractedInfo())
+            results.append({
+                "filename": file.filename,
+                "status": "success" if result.get("extracted_invoice_data") else "error",
+                "data": result.get("extracted_invoice_data"),
+                "json_path": str(JSON_DIR / f"{thread_id}_{Path(temp_file_path).stem}.json"),
+                "html": html_content
+            })
+
+        except Exception as e:
+            print(f"ERROR: Exception processing {file.filename}: {e}")
+            assistant_message = f"Error processing invoice {file.filename}: {str(e)}"
+            conversation_store.add_message(thread_id, "assistant", assistant_message)
+            html_content = question_to_html(assistant_message, ExtractedInfo())
+            results.append({
+                "filename": file.filename if file else "unknown",
+                "status": "error",
+                "error": str(e),
+                "html": html_content
+            })
+        finally:
+            if temp_file_path and temp_file_path.exists():
+                try:
+                    temp_file_path.unlink()
+                except Exception as e:
+                    print(f"Error cleaning up file {temp_file_path}: {e}")
+
+    return results
