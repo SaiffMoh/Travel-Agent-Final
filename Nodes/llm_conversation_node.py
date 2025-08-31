@@ -1,3 +1,5 @@
+# Enhanced llm_conversation_node.py
+
 import json
 import os
 from Models.TravelSearchState import TravelSearchState
@@ -6,7 +8,7 @@ from Utils.getLLM import get_llm_json
 from Prompts.llm_conversation import build_input_extraction_prompt
 
 def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
-    """LLM-driven conversational node that intelligently handles all user input parsing and follow-up questions."""
+    """Enhanced LLM-driven conversational node that intelligently handles all user input parsing and manages seamless flow transitions."""
 
     try:
         if not os.getenv("OPENAI_API_KEY"):
@@ -22,6 +24,12 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
 
         try:
             llm_result = json.loads(response.content)
+            print(f"LLM result: {llm_result}")
+            
+            # Pass the is_new_search flag to the state for the router to handle
+            state["is_new_search"] = llm_result.get("is_new_search", False)
+            
+            # Update state with extracted information
             if llm_result.get("departure_date"):
                 state["departure_date"] = llm_result["departure_date"]
             if llm_result.get("origin"):
@@ -33,12 +41,17 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
             if llm_result.get("duration") is not None:
                 state["duration"] = llm_result["duration"]
 
-            # Capture follow-up suggestion but don't force flags here; analyze node decides
+            # Update control flags
             state["followup_question"] = llm_result.get("followup_question")
+            state["needs_followup"] = llm_result.get("needs_followup", True)
+            state["info_complete"] = llm_result.get("info_complete", False)
 
-            # If LLM believes it's complete, keep a hint
+            # If LLM believes it's complete, set request type
             if llm_result.get("info_complete"):
                 state["request_type"] = state.get("request_type") or "flights"
+                
+            print(f"Updated state - Origin: {state.get('origin')}, Destination: {state.get('destination')}, Date: {state.get('departure_date')}")
+            print(f"Info complete: {state.get('info_complete')}, Needs followup: {state.get('needs_followup')}")
 
         except json.JSONDecodeError:
             print(f"LLM response parsing error. Raw response: {response.content}")

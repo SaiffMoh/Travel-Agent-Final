@@ -1,3 +1,5 @@
+# graph.py - Clean graph structure only
+
 from langgraph.graph import StateGraph, END
 from Models.TravelSearchState import TravelSearchState
 from Nodes.analyze_conversation_node import analyze_conversation_node
@@ -12,13 +14,17 @@ from Nodes.normalize_info_node import normalize_info_node
 from Nodes.parse_company_hotels_node import parse_company_hotels_node
 from Nodes.summarize_packages import summarize_packages
 from Nodes.toHTML import toHTML
+from Nodes.visa_rag_node import visa_rag_node
+from Nodes.general_conversation_node import general_conversation_node
 from Utils.decisions import check_info_complete
+from Utils.routing import smart_router
 
 def create_travel_graph():
     graph = StateGraph(TravelSearchState)
 
-    # Nodes
+    # Add all nodes
     graph.add_node("llm_conversation", llm_conversation_node)
+    graph.add_node("general_conversation", general_conversation_node)
     graph.add_node("analyze_conversation", analyze_conversation_node)
     graph.add_node("normalize_info", normalize_info_node)
     graph.add_node("parse_company_hotels", parse_company_hotels_node)
@@ -30,20 +36,40 @@ def create_travel_graph():
     graph.add_node("create_packages", create_packages)
     graph.add_node("summarize_packages", summarize_packages)
     graph.add_node("to_html", toHTML)
+    graph.add_node("visa_rag", visa_rag_node)
 
-    # Flow
-    graph.add_edge("llm_conversation", "analyze_conversation")
+    # Entry point and main routing
+    graph.set_entry_point("llm_conversation")
+    
+    graph.add_conditional_edges(
+        "llm_conversation",
+        smart_router,
+        {
+            "travel_flow": "analyze_conversation",
+            "visa_rag": "visa_rag", 
+            "general_conversation": "general_conversation",
+            "need_more_info": END
+        }
+    )
+    
+    # End points for non-travel flows
+    graph.add_edge("visa_rag", END)
+    graph.add_edge("general_conversation", END)
+    
+    # Travel flow - analyze conversation then proceed to search
     graph.add_conditional_edges(
         "analyze_conversation",
         check_info_complete,
         {
             "flights": "normalize_info",
-            "hotels": "normalize_info",
+            "hotels": "normalize_info", 
             "packages": "normalize_info",
             "selection_request": "normalize_info",
             "ask_followup": END
         }
     )
+    
+    # Main travel search pipeline
     graph.add_edge("normalize_info", "parse_company_hotels")
     graph.add_edge("parse_company_hotels", "format_body")
     graph.add_edge("format_body", "get_access_token")
@@ -54,8 +80,5 @@ def create_travel_graph():
     graph.add_edge("create_packages", "summarize_packages")
     graph.add_edge("summarize_packages", "to_html")
     graph.add_edge("to_html", END)
-
-    # Entry point
-    graph.set_entry_point("llm_conversation")
 
     return graph

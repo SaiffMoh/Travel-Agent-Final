@@ -6,7 +6,10 @@ def parse_company_hotels_node(state: TravelSearchState) -> TravelSearchState:
     """Parse the company hotels Excel sheet with city codes and store in state."""
     try:
         # Use provided path or default
-        excel_path = state.get("company_hotels_path", "data/International Hotels - Copy.xlsx")
+        excel_path = state.get(
+        "company_hotels_path",
+        "data/Company Hotels/International Hotels - Copy.xlsx"
+        )
 
         # Read Excel file
         df = pd.read_excel(excel_path, sheet_name="International Hotels")

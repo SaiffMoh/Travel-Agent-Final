@@ -10,3 +10,8 @@ requests>=2.31.0
 pydantic
 pandas
 openpyxl
+faiss-cpu
+PyMuPDF
+sentence_transformers
+python-bidi
+pypdf

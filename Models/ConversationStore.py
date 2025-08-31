@@ -5,6 +5,7 @@ from datetime import datetime
 class ConversationStore:
     def __init__(self):
         self._conversations: Dict[str, List[Dict[str, Any]]] = {}
+        self._states: Dict[str, Dict[str, Any]] = {}  # Added for state persistence
     
     def get_conversation(self, thread_id: str) -> List[Dict[str, Any]]:
         """Get conversation history for a thread"""
@@ -40,6 +41,19 @@ class ConversationStore:
     def get_all_threads(self) -> List[str]:
         """Get all active thread IDs"""
         return list(self._conversations.keys())
+    
+    def save_state(self, thread_id: str, state: Dict[str, Any]) -> None:
+        """Save state for a thread"""
+        self._states[thread_id] = state
+    
+    def get_state(self, thread_id: str) -> Dict[str, Any]:
+        """Get state for a thread"""
+        return self._states.get(thread_id, {})
+    
+    def clear_state(self, thread_id: str) -> None:
+        """Clear state for a thread"""
+        if thread_id in self._states:
+            del self._states[thread_id]
 
 # Global conversation store instance
 conversation_store = ConversationStore()

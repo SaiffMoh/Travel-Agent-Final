@@ -1,81 +1,122 @@
-from datetime import datetime
+# Prompts/llm_conversation.py - Enhanced prompt with fixed completion logic
+
+from datetime import datetime, timedelta
 from Models.TravelSearchState import TravelSearchState
 
-def build_input_extraction_prompt(state: TravelSearchState):
-    """Build the LLM prompt for extracting flight booking information."""
+def build_input_extraction_prompt(state: TravelSearchState) -> str:
+    """Build context-aware prompt for input extraction that handles seamless conversation flow"""
+    
     current_date = datetime.now()
     current_date_str = current_date.strftime("%Y-%m-%d")
     current_month = current_date.month
     current_day = current_date.day
     current_year = current_date.year
-
+    tomorrow_str = (current_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    
     conversation_text = "".join(f"{m['role']}: {m['content']}\n" for m in state.get("conversation", []))
     user_text = state.get("current_message", "")
+    travel_completed = state.get("travel_search_completed", False)
+    
+    # Build current state context
+    current_state_info = ""
+    if state.get("departure_date"):
+        current_state_info += f"Current departure date: {state['departure_date']}\n"
+    if state.get("origin"):
+        current_state_info += f"Current origin: {state['origin']}\n"
+    if state.get("destination"):
+        current_state_info += f"Current destination: {state['destination']}\n"
+    if state.get("cabin_class"):
+        current_state_info += f"Current cabin class: {state['cabin_class']}\n"
+    if state.get("duration"):
+        current_state_info += f"Current duration: {state['duration']} days\n"
 
     return f"""
-        You are an expert travel assistant helping users book flights. Today's date is {current_date_str}.
+You are an expert travel assistant helping users book flights. Today's date is {current_date_str}.
 
-        CONVERSATION SO FAR:
-        {conversation_text}
+CONVERSATION SO FAR:
+{conversation_text}
 
-        USER'S LATEST MESSAGE: "{user_text}"
+USER'S LATEST MESSAGE: "{user_text}"
 
-        YOUR TASKS:
-        1. Extract/update flight information from the entire conversation
-        2. Intelligently parse dates and locations 
-        3. Ask for ONE missing piece of information OR indicate completion
+CURRENT CONTEXT:
+- Previous travel search status: {"completed" if travel_completed else "in progress"}
+- Current travel information:
+{current_state_info if current_state_info else "No current travel information"}
 
-        DATE PARSING RULES (CRITICAL):
-        - If user says "august 20th" or "Aug 20" → convert to "2025-08-20" 
-        - If year omitted: use {current_year}, UNLESS month is before {current_month}, then use {current_year + 1}
-        - If month and year omitted: use current month/year, UNLESS day is before {current_day}, then next month
-        - If next month would be January, increment year too
-        - Always output dates as YYYY-MM-DD
+YOUR TASKS:
+1. Determine if this is a NEW travel search request or continuation of existing search
+2. Extract/update flight information intelligently
+3. Handle seamless transitions between different requests
 
-        LOCATION PARSING:
-        - Convert casual names: "NYC" → "New York", "LA" → "Los Angeles"
-        - Accept abbreviations and full names
+CRITICAL DETECTION RULES:
+- If user mentions NEW destinations that differ from current destination → treat as NEW search
+- If user says "I want to go to [different place]" → NEW search
+- If previous search was completed AND user mentions travel → NEW search
+- If user provides additional details for SAME destination → update existing info
+- If user asks about visas or non-travel topics → extract any travel info mentioned but focus on their query
 
-        CABIN CLASS PARSING:
-        - "eco" → "economy", "biz" → "business", "first" → "first class"
+NEW SEARCH DETECTION (ENHANCED):
+- Previous search completed AND user mentions any travel = NEW search
+- Different destination from current state = NEW search  
+- User says "now I want to..." or "I also want to..." = NEW search
+- User provides origin+destination combo that differs from current = NEW search
 
-        REQUIRED INFORMATION:
-        1. departure_date (YYYY-MM-DD format)
-        2. origin (city name)
-        3. destination (city name) 
-        4. cabin_class (economy/business/first class)
-        5. duration (number of days for round trip)
+DATE PARSING RULES (CRITICAL):
+- If user says "august 20th" or "Aug 20" → convert to "2025-08-20" 
+- If year omitted: use {current_year}, UNLESS month is before {current_month}, then use {current_year + 1}
+- If month and year omitted: use current month/year, UNLESS day is before {current_day}, then next month
+- If next month would be January, increment year too
+- Always output dates as YYYY-MM-DD
+- "tomorrow" = "{tomorrow_str}"
 
-        CURRENT STATE:
-        - departure_date: {state.get('departure_date', 'Not provided')}
-        - origin: {state.get('origin', 'Not provided')}
-        - destination: {state.get('destination', 'Not provided')}
-        - cabin_class: {state.get('cabin_class', 'Not provided')}
-        - duration: {state.get('duration', 'Not provided')}
-        - trip_type: {state.get('trip_type', 'round trip')} (always round trip)
+LOCATION PARSING:
+- Convert casual names: "NYC" → "New York", "LA" → "Los Angeles"
+- Accept abbreviations and full names
 
-        RESPONSE FORMAT (STRICT JSON ONLY, no prose, no backticks; mention of json here is intentional):
-        {{
-        "departure_date": "YYYY-MM-DD or null",
-        "origin": "City Name or null", 
-        "destination": "City Name or null",
-        "cabin_class": "economy/business/first class or null",
-        "duration": number_or_null,
-        "followup_question": "Ask for ONE missing piece OR null if complete",
-        "needs_followup": true_or_false,
-        "info_complete": true_or_false
-        }}
+CABIN CLASS PARSING:
+- "eco" → "economy", "biz" → "business", "first" → "first class"
+- Default to "economy" if not specified
 
-        RULES:
-        - If and only if departure_date, origin, and destination are all present → set info_complete=true and needs_followup=false and followup_question=null.
-        - Otherwise → set info_complete=false and needs_followup=true and set followup_question to a single, direct missing question (e.g., "Which city are you flying from?").
-        - Update as many fields as the user provides in the latest message.
-        - Output ONLY valid json.
+DURATION PARSING:
+- Numbers like "5", "5 days", "one week" → convert to number of days
+- Default to 7 if not specified and all other info is complete
 
-        EXAMPLES:
-        - User: "I want to fly to Paris on august 20th" → {{"departure_date": "2025-08-20", "destination": "Paris", "followup_question": "Which city are you flying from?", "needs_followup": true, "info_complete": false}}
-        - User: "from NYC, eco class" → {{"origin": "New York", "cabin_class": "economy", "followup_question": "Which city would you like to fly to?", "needs_followup": true, "info_complete": false}}
-        - User: "5 days" → {{"duration": 5, "followup_question": "What date would you like to depart?", "needs_followup": true, "info_complete": false}}
+REQUIRED INFORMATION FOR COMPLETE SEARCH:
+1. departure_date (YYYY-MM-DD format)
+2. origin (city name)
+3. destination (city name) 
+4. cabin_class (economy/business/first class)
+5. duration (number of days for round trip)
 
-        BE SMART: If user provides multiple pieces of info at once, extract all of them. Ask natural, single, conversational follow-up.
-    """
+COMPLETION LOGIC (CRITICAL):
+- ALL 5 fields must be present to mark info_complete=true
+- If user provides just a number (like "5") when we're asking for duration, treat as duration in days
+- If 4 out of 5 fields are present and user gives remaining info, complete immediately
+- Set needs_followup=false and followup_question=null when complete
+
+FOLLOWUP QUESTION RULES:
+- For NEW searches: Ask for missing info efficiently 
+- For continuing searches: Ask for ONE missing piece only
+- If it's a new search but user provided some info: "I see you want to go from [origin] to [destination]. What's your departure date and how many days will you stay?"
+- Always ask natural, conversational questions
+
+RESPONSE FORMAT (STRICT JSON ONLY, no prose, no backticks):
+{{
+    "departure_date": "YYYY-MM-DD or null",
+    "origin": "City Name or null", 
+    "destination": "City Name or null",
+    "cabin_class": "economy/business/first class or null",
+    "duration": number_or_null,
+    "followup_question": "Ask for missing info OR null if complete",
+    "needs_followup": true_or_false,
+    "info_complete": true_or_false,
+    "is_new_search": true_or_false
+}}
+
+COMPLETION EXAMPLES:
+- If ALL 5 fields present → {{"info_complete": true, "needs_followup": false, "followup_question": null}}
+- If 4/5 fields present → {{"info_complete": false, "needs_followup": true, "followup_question": "What's missing?"}}
+- User says "5" when asked for duration → {{"duration": 5, "info_complete": true, "needs_followup": false, "followup_question": null}} (if other fields complete)
+
+BE SMART: When all required info is present, immediately mark as complete. Don't ask unnecessary confirmation questions.
+"""

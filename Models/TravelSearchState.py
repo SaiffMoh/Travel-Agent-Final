@@ -13,6 +13,7 @@ class TravelSearchState(TypedDict, total=False):
     info_complete: bool
     followup_question: Optional[str]
     request_type: Optional[str]  # flights / hotels / packages
+    travel_search_completed: bool  # Added to track if travel search is done
     # -------------------------
     # Flight search
     # -------------------------
@@ -86,3 +87,7 @@ class TravelSearchState(TypedDict, total=False):
     travel_packages_html: Optional[List[str]]
     selected_offer: Optional[Dict[str, Any]]
     package_results: Optional[Any]
+    # -------------------------
+    # Visa info
+    # -------------------------
+    visa_info_html: Optional[str]
