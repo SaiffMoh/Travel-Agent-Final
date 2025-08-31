@@ -75,7 +75,7 @@ LOCATION PARSING:
 
 CABIN CLASS PARSING:
 - "eco" → "economy", "biz" → "business", "first" → "first class"
-- Default to "economy" if not specified
+- If not specified → return null (do not assume)
 
 DURATION PARSING:
 - Numbers like "5", "5 days", "one week" → convert to number of days
