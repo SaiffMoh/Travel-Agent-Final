@@ -1,230 +1,334 @@
-from typing import Dict, Optional, Any
-from Models.TravelSearchState import TravelSearchState
-from Models.InvoiceModels import InvoiceData
-from pathlib import Path
-import pdfplumber
-import re
 import json
-from datetime import datetime
-from openai import OpenAI
-from dotenv import load_dotenv
-from Utils.invoice_to_html import invoice_to_html
 import os
+import re
+from typing import Dict, List
+import pdfplumber
+from Models.TravelSearchState import TravelSearchState
+from Utils.watson_config import llm
+import logging
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def generate_system_prompt(schema_json: str) -> str:
-    return f"""
-You are an expert document parser specialized in flight and travel invoices.
+def clean_json_response(response: str) -> str:
+    """Clean the LLM response to extract valid JSON."""
+    # Remove common LLM artifacts
+    response = response.strip()
+    
+    # Remove end-of-message tokens and similar artifacts
+    response = re.sub(r'<\|eom_id\|>.*$', '', response, flags=re.DOTALL)
+    response = re.sub(r'<\|end\|>.*$', '', response, flags=re.DOTALL)
+    response = re.sub(r'```(?:json)?', '', response)
+    response = response.strip()
+    
+    # Extract JSON object using regex - find the outermost braces
+    json_pattern = r'\{(?:[^{}]|{[^{}]*})*\}'
+    matches = re.findall(json_pattern, response, re.DOTALL)
+    
+    if matches:
+        # Take the largest match (most complete JSON)
+        json_str = max(matches, key=len)
+        return json_str.strip()
+    
+    # Fallback: try to find JSON between first { and last }
+    start_idx = response.find('{')
+    end_idx = response.rfind('}')
+    
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        return response[start_idx:end_idx + 1].strip()
+    
+    return response
 
-Your job is to extract ALL structured data from a messy OCR invoice text.
+def deduplicate_flight_entries(flight_details: List[Dict]) -> List[Dict]:
+    """Deduplicate flight entries based on ticket_number, departure_date, origin, destination, and passenger."""
+    if not flight_details:
+        return flight_details
 
-CRITICAL INSTRUCTIONS:
-1. Extract ONLY information explicitly present in the document.
-2. Deduplicate flight entries with identical ticket_number, departure_date, origin, destination, and passenger, summing their amount and total_amount.
-3. Include a top-level total_amount as the sum of all flight_details total_amount values.
-4. Do NOT infer or add default values (e.g., times, service_type) unless explicitly stated.
-5. For missing ticket_number, use invoice_number with an index (e.g., 'CR2500002644-1').
-
-EXTRACTION RULES:
-1. For invoice numbers, look for patterns (case insensitive): 'Invoice #', 'INV-', 'No.', 'Number:', 'Ref:', 'Reference:', 'Internal ID'.
-2. For vendor types, use only if explicitly mentioned:
-   - 'travel_agency' (e.g., 'travel agency', 'Expedia', Tax Activity Code '7911')
-   - 'airline' (e.g., 'Egypt Air')
-   - 'hotel', 'car_rental', 'supplier'
-3. For invoice state, use 'pending', 'valid', or 'canceled' if stated; default to 'pending'.
-4. For currency, use 3-letter ISO codes (e.g., USD, EGP) from symbols or text.
-5. For flight details, MANDATORY fields:
-   - airline: Infer from flight number (e.g., 'MS' → 'Egypt Air') if not explicit.
-   - origin, destination: Use city or airport code.
-   - departure_date, arrival_date: Use exact dates/times as provided; do NOT add default times.
-   - service_type: Extract only if explicitly stated (e.g., 'class: E-'); otherwise, leave null.
-   - passenger, ticket_number, amount, tax, total_amount: Extract if available; use 0.00 for missing amounts.
-6. If ticket_number is missing, generate as '<invoice_number>-<index>' (e.g., 'CR2500002644-1').
-
-RULES:
-1. Do NOT return 'N/A' or defaults for optional fields; use null.
-2. For missing dates, use current date for issued_date only if not provided.
-3. Deduplicate flight_details by ticket_number, departure_date, origin, destination, passenger, summing amounts.
-4. For currency, validate as 3-letter ISO code.
-5. Ensure flight segments have consistent data as per the document.
-
-Return ONLY a valid JSON matching this schema:
-{schema_json}
-""".strip()
-
-SYSTEM_PROMPT = generate_system_prompt(InvoiceData.model_json_schema())
+    deduplicated = []
+    seen = {}
+    for entry in flight_details:
+        key = (
+            entry.get("ticket_number"),
+            entry.get("departure_date"),
+            entry.get("origin"),
+            entry.get("destination"),
+            entry.get("passenger")
+        )
+        if key in seen:
+            # Sum amounts and total_amounts
+            idx = seen[key]
+            try:
+                # Clean monetary values by removing commas
+                current_amount = float(str(deduplicated[idx]["amount"]).replace(',', ''))
+                new_amount = float(str(entry["amount"]).replace(',', ''))
+                current_total = float(str(deduplicated[idx]["total_amount"]).replace(',', ''))
+                new_total = float(str(entry["total_amount"]).replace(',', ''))
+                current_tax = float(str(deduplicated[idx]["tax"]).replace(',', ''))
+                new_tax = float(str(entry["tax"]).replace(',', ''))
+                
+                deduplicated[idx]["amount"] = f"{current_amount + new_amount:.2f}"
+                deduplicated[idx]["total_amount"] = f"{current_total + new_total:.2f}"
+                deduplicated[idx]["tax"] = f"{current_tax + new_tax:.2f}"
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to sum amounts for duplicate entry {key}: {e}")
+                continue
+        else:
+            seen[key] = len(deduplicated)
+            # Clean monetary values in the entry
+            for field in ["amount", "tax", "total_amount"]:
+                if entry.get(field):
+                    try:
+                        value = str(entry[field]).replace(',', '')
+                        entry[field] = f"{float(value):.2f}"
+                    except (ValueError, TypeError):
+                        pass
+            deduplicated.append(entry)
+    return deduplicated
 
 def invoice_extraction_node(state: TravelSearchState) -> TravelSearchState:
-    """Node to process an uploaded invoice PDF and generate an HTML table."""
+    """Extract structured data from uploaded invoice PDF using Watsonx LLM."""
+    pdf_path = state.get("invoice_pdf_path")
+    thread_id = state.get("thread_id")
+    
+    if not pdf_path or not os.path.exists(pdf_path):
+        logger.error(f"PDF path not found or invalid: {pdf_path}")
+        state["extracted_invoice_data"] = None
+        state["invoice_html"] = "<div class='question-response'><div class='question'><p>No PDF file found. Please upload a valid invoice.</p></div></div>"
+        state["followup_question"] = "No PDF file found. Please upload a valid invoice."
+        state["needs_followup"] = True
+        return state
+
     try:
-        pdf_path = state.get("invoice_pdf_path")
-        if not pdf_path or not Path(pdf_path).exists():
-            print("ERROR: No valid PDF path in state")
-            state["needs_followup"] = True
-            state["followup_question"] = "No invoice found to process. Please upload a valid PDF."
-            state["extracted_invoice_data"] = None
-            state["invoice_html"] = None
-            json_path = Path("data/uploads/json_outputs") / f"{state['thread_id']}_{Path(pdf_path).stem}.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"error": "No valid PDF path in state"}, f, indent=2)
-            return state
-
         # Extract text from PDF
-        text_list = []
         with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    text_list.append(text)
-        text = "\n".join(text_list).strip()
-        if not text:
-            print("ERROR: No text extracted from PDF")
-            state["needs_followup"] = True
-            state["followup_question"] = "The uploaded PDF is empty or unreadable. Please upload a valid invoice PDF."
-            state["extracted_invoice_data"] = None
-            state["invoice_html"] = None
-            json_path = Path("data/uploads/json_outputs") / f"{state['thread_id']}_{Path(pdf_path).stem}.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"error": "No text extracted from PDF"}, f, indent=2)
-            return state
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        logger.info(f"Extracted text from {pdf_path}: {text[:500]}...")
 
-        # Extract structured data using LLM
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text}
-            ],
-            temperature=0,
-        )
-        reply = response.choices[0].message.content.strip()
-        print(f"LLM raw response: {reply}")
-        cleaned_reply = re.sub(r"^```(?:json)?|```$", "", reply.strip(), flags=re.MULTILINE).strip()
+        # Build prompt for Watsonx - Updated to be more explicit about JSON format
+        prompt = f"""<|SYSTEM|>You are an expert document parser specialized in flight and travel invoices.
 
-        # Parse and clean the response
+Extract structured data from the OCR invoice text and return ONLY a valid JSON object.
+
+CRITICAL REQUIREMENTS:
+1. Return ONLY the JSON object - no additional text, tokens, or explanations
+2. Use double quotes for all strings in JSON
+3. Ensure all monetary values are strings without commas (e.g., "44994.00")
+4. Use null for missing fields (not "null" string)
+5. Dates in ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS
+6. No trailing commas in JSON
+7. No extra tokens like <|eom_id|> or <|end|>
+
+JSON SCHEMA:
+{{
+    "invoice_number": "string or null",
+    "issued_date": "YYYY-MM-DDTHH:MM:SS or null",
+    "submission_date": "YYYY-MM-DDTHH:MM:SS or null",
+    "vendor_type": "travel_agency or null",
+    "vendor_name": "string or null",
+    "subsidiary_name": "string or null",
+    "invoice_state": "string or null",
+    "currency": "string or null",
+    "travel_agency": "string or null",
+    "flight_details": [
+        {{
+            "airline": "string or null",
+            "origin": "string or null",
+            "destination": "string or null",
+            "departure_date": "YYYY-MM-DD or null",
+            "arrival_date": "YYYY-MM-DD or null",
+            "passenger": "string or null",
+            "ticket_number": "string or null",
+            "service_type": "string or null",
+            "amount": "string or null",
+            "tax": "string or null",
+            "total_amount": "string or null"
+        }}
+    ],
+    "total_amount": "string or null"
+}}
+
+OCR TEXT:
+{text}
+
+<|USER|>Return only the JSON object with no extra text or tokens.<|END|>"""
+
+        logger.info(f"Watsonx prompt: {prompt[:500]}...")
+
+        # Invoke Watsonx LLM
+        response = llm.generate(prompt=prompt)
+        raw_reply = response["results"][0]["generated_text"].strip()
+        logger.info(f"Watsonx LLM raw response: {raw_reply}")
+
+        # Clean the response to extract valid JSON
+        cleaned_reply = clean_json_response(raw_reply)
+        logger.info(f"Cleaned JSON response: {cleaned_reply}")
+
         try:
-            parsed = json.loads(cleaned_reply)
+            invoice_data = json.loads(cleaned_reply)
+            logger.info(f"Parsed invoice data before deduplication: {invoice_data}")
 
-            # Deduplicate flight_details
-            def deduplicate_flights(flights: list, invoice_number: str) -> list:
-                if not flights:
-                    return []
-                deduped = {}
-                for idx, flight in enumerate(flights):
-                    if not isinstance(flight, dict):
-                        continue
-                    # Handle missing ticket_number
-                    ticket_number = flight.get("ticket_number")
-                    if not ticket_number or ticket_number in ["", "null", "N/A", "Unknown"]:
-                        ticket_number = f"{invoice_number}-{idx + 1}"
-                        flight["ticket_number"] = ticket_number
-                    key = (
-                        ticket_number,
-                        flight.get("departure_date"),
-                        flight.get("origin"),
-                        flight.get("destination"),
-                        flight.get("passenger")
+            # Validate that we have a proper structure
+            if not isinstance(invoice_data, dict):
+                raise ValueError("Response is not a JSON object")
+
+            # Deduplicate flight entries
+            if invoice_data.get("flight_details"):
+                invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
+                # Recalculate total_amount
+                try:
+                    total = sum(
+                        float(str(flight["total_amount"]).replace(',', '')) 
+                        for flight in invoice_data["flight_details"] 
+                        if flight.get("total_amount")
                     )
-                    if key in deduped:
-                        deduped[key]["amount"] = str(float(deduped[key].get("amount", 0)) + float(flight.get("amount", 0)))
-                        deduped[key]["total_amount"] = str(float(deduped[key].get("total_amount", 0)) + float(flight.get("total_amount", 0)))
-                    else:
-                        deduped[key] = flight.copy()
-                return list(deduped.values())
+                    invoice_data["total_amount"] = f"{total:.2f}"
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to recalculate total_amount: {e}")
+                    invoice_data["total_amount"] = invoice_data.get("total_amount", "0.00")
+            
+            logger.info(f"Processed invoice data: {invoice_data}")
 
-            # Clean LLM output
-            def clean_value(value: Any) -> Any:
-                if value is None or value == "" or value == "N/A" or value == "null" or value == "Unknown":
-                    return None
-                if isinstance(value, dict):
-                    cleaned = {k: clean_value(v) for k, v in value.items()}
-                    return cleaned if cleaned else None
-                elif isinstance(value, list):
-                    cleaned = [clean_value(v) for v in value]
-                    return [v for v in cleaned if v is not None] or None
-                elif isinstance(value, str):
-                    value = value.strip()
-                    if not value or value.lower() in ['null', 'none', 'n/a', 'unknown']:
-                        return None
-                    value = re.sub(r'\s+', ' ', value).strip('\'"')
-                    return value if value else None
-                return value
+            # Save JSON to file
+            json_dir = os.path.join("data", "uploads", "json_outputs")
+            os.makedirs(json_dir, exist_ok=True)
+            json_filename = f"{thread_id}_{os.path.basename(pdf_path).replace('.pdf', '')}.json"
+            json_path = os.path.join(json_dir, json_filename)
+            with open(json_path, 'w') as f:
+                json.dump(invoice_data, f, indent=2)
+            logger.info(f"Saved JSON to {json_path}")
 
-            cleaned = {}
-            invoice_number = parsed.get("invoice_number", "Unknown")
-            for k, v in parsed.items():
-                if k == 'flight_details' and isinstance(v, list):
-                    cleaned_flights = deduplicate_flights(v, invoice_number)
-                    if cleaned_flights:
-                        cleaned['flight_details'] = cleaned_flights
-                else:
-                    cleaned_v = clean_value(v)
-                    if cleaned_v is not None:
-                        cleaned[k] = cleaned_v
-
-            # Calculate total_amount
-            if 'flight_details' in cleaned and cleaned['flight_details']:
-                total_amount = sum(float(flight.get("total_amount", 0)) for flight in cleaned['flight_details'])
-                cleaned['total_amount'] = str(total_amount)
-
-            if 'invoice_number' in cleaned and isinstance(cleaned['invoice_number'], str):
-                invoice_num = cleaned['invoice_number'].strip()
-                for prefix in ['Invoice', 'INV', 'No.', '#', ':', 'Internal ID']:
-                    if invoice_num.startswith(prefix):
-                        invoice_num = invoice_num[len(prefix):].strip()
-                cleaned['invoice_number'] = invoice_num if invoice_num and invoice_num != 'Unknown' else None
-
-            if 'flight_details' in cleaned and not cleaned['flight_details']:
-                del cleaned['flight_details']
-
-            if 'currency' in cleaned and isinstance(cleaned['currency'], str):
-                cleaned['currency'] = cleaned['currency'].strip().upper()
-                if len(cleaned['currency']) != 3 or not cleaned['currency'].isalpha():
-                    del cleaned['currency']
-
-            cleaned.setdefault("subsidiary_name", None)
-            cleaned.setdefault("travel_agency", None)
-            cleaned.setdefault("issued_date", datetime.now().isoformat())
-            invoice = InvoiceData(**cleaned)
-
-            # Save JSON with thread_id
-            thread_id = state["thread_id"]
-            json_path = Path("data/uploads/json_outputs") / f"{thread_id}_{Path(pdf_path).stem}.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(invoice.dict(), f, indent=2, default=str)
-
-            # Generate HTML table
-            html_table = invoice_to_html(invoice.dict())
-
-            # Update state
-            state["extracted_invoice_data"] = invoice.dict()
-            state["invoice_html"] = html_table
+            # Generate HTML for invoice data
+            invoice_html = generate_invoice_html(invoice_data)
+            state["extracted_invoice_data"] = invoice_data
+            state["invoice_html"] = invoice_html
+            state["followup_question"] = "Invoice processed successfully. Would you like to book another trip or check visa requirements?"
             state["needs_followup"] = True
-            state["followup_question"] = "Invoice processed successfully. Would you like to proceed with a travel search or something else?"
-            state["invoice_uploaded"] = False
-            state["invoice_pdf_path"] = None
-
-            return state
+            state["current_node"] = "invoice_extraction"
 
         except json.JSONDecodeError as je:
-            print(f"ERROR: Failed to parse GPT response: {je}, raw response: {reply}")
-            state["needs_followup"] = True
-            state["followup_question"] = "Failed to parse invoice data. Please upload a valid PDF with recognizable invoice details."
-            state["extracted_invoice_data"] = None
-            state["invoice_html"] = None
-            json_path = Path("data/uploads/json_outputs") / f"{state['thread_id']}_{Path(pdf_path).stem}.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"error": f"Failed to parse GPT response: {str(je)}"}, f, indent=2)
-            return state
+            logger.error(f"Failed to parse JSON: {je}")
+            logger.error(f"Cleaned response that failed: {cleaned_reply}")
+            
+            # Try one more aggressive cleaning approach
+            try:
+                # Extract everything between the first { and last }
+                match = re.search(r'\{.*\}', cleaned_reply, re.DOTALL)
+                if match:
+                    final_attempt = match.group(0)
+                    # Remove any trailing tokens after the closing brace
+                    final_attempt = re.sub(r'\}.*$', '}', final_attempt, flags=re.DOTALL)
+                    invoice_data = json.loads(final_attempt)
+                    logger.info("Successfully parsed JSON on second attempt")
+                    
+                    # Continue with the same processing as above
+                    if invoice_data.get("flight_details"):
+                        invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
+                        try:
+                            total = sum(
+                                float(str(flight["total_amount"]).replace(',', '')) 
+                                for flight in invoice_data["flight_details"] 
+                                if flight.get("total_amount")
+                            )
+                            invoice_data["total_amount"] = f"{total:.2f}"
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Failed to recalculate total_amount: {e}")
+                    
+                    # Save and generate HTML
+                    json_dir = os.path.join("data", "uploads", "json_outputs")
+                    os.makedirs(json_dir, exist_ok=True)
+                    json_filename = f"{thread_id}_{os.path.basename(pdf_path).replace('.pdf', '')}.json"
+                    json_path = os.path.join(json_dir, json_filename)
+                    with open(json_path, 'w') as f:
+                        json.dump(invoice_data, f, indent=2)
+                    
+                    invoice_html = generate_invoice_html(invoice_data)
+                    state["extracted_invoice_data"] = invoice_data
+                    state["invoice_html"] = invoice_html
+                    state["followup_question"] = "Invoice processed successfully. Would you like to book another trip or check visa requirements?"
+                    state["needs_followup"] = True
+                    state["current_node"] = "invoice_extraction"
+                    
+                else:
+                    raise json.JSONDecodeError("Could not extract valid JSON", cleaned_reply, 0)
+                    
+            except json.JSONDecodeError:
+                logger.error(f"Complete JSON parsing failure. Raw: {raw_reply}")
+                logger.error(f"Cleaned: {cleaned_reply}")
+                state["extracted_invoice_data"] = None
+                state["invoice_html"] = "<div class='question-response'><div class='question'><p>Failed to parse invoice data. The PDF may be corrupted or in an unsupported format.</p></div></div>"
+                state["followup_question"] = "Failed to parse invoice data. Please upload a valid PDF with recognizable invoice details."
+                state["needs_followup"] = True
+
     except Exception as e:
-        print(f"ERROR: Invoice processing failed: {e}")
-        state["needs_followup"] = True
-        state["followup_question"] = f"Error processing invoice: {str(e)}. Please try uploading a valid PDF."
+        logger.error(f"Error processing invoice {pdf_path}: {e}")
         state["extracted_invoice_data"] = None
-        state["invoice_html"] = None
-        json_path = Path("data/uploads/json_outputs") / f"{state['thread_id']}_{Path(pdf_path).stem}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump({"error": f"Invoice processing failed: {str(e)}"}, f, indent=2)
-        return state
+        state["invoice_html"] = "<div class='question-response'><div class='question'><p>Failed to process invoice. Please try again or upload a different PDF.</p></div></div>"
+        state["followup_question"] = "Failed to process invoice. Please try again or upload a different PDF."
+        state["needs_followup"] = True
+
+    return state
+
+
+def generate_invoice_html(invoice_data: dict) -> str:
+    """Generate HTML representation of extracted invoice data."""
+    if not invoice_data:
+        return "<div class='question-response'><div class='question'><p>No invoice data available.</p></div></div>"
+
+    html = ['<div class="overflow-x-auto"><table class="table-auto w-full border-collapse border border-gray-300">']
+    html.append('<thead><tr class="bg-gray-100">')
+    html.append('<th class="border border-gray-300 px-4 py-2">Field</th>')
+    html.append('<th class="border border-gray-300 px-4 py-2">Value</th>')
+    html.append('</tr></thead><tbody>')
+
+    fields = [
+        ("Invoice Number", invoice_data.get("invoice_number")),
+        ("Issued Date", invoice_data.get("issued_date")),
+        ("Submission Date", invoice_data.get("submission_date")),
+        ("Vendor Type", invoice_data.get("vendor_type")),
+        ("Vendor Name", invoice_data.get("vendor_name")),
+        ("Subsidiary Name", invoice_data.get("subsidiary_name")),
+        ("Invoice State", invoice_data.get("invoice_state")),
+        ("Currency", invoice_data.get("currency")),
+        ("Total Amount", invoice_data.get("total_amount"))
+    ]
+
+    for field, value in fields:
+        # Escape special characters in HTML
+        value = str(value).replace("<", "&lt;").replace(">", "&gt;") if value else "N/A"
+        html.append(f'<tr><td class="border border-gray-300 px-4 py-2">{field}</td>')
+        html.append(f'<td class="border border-gray-300 px-4 py-2">{value}</td></tr>')
+
+    if invoice_data.get("flight_details"):
+        html.append('<tr><td class="border border-gray-300 px-4 py-2" colspan="2">')
+        html.append('<div class="mt-4"><strong>Flight Details</strong></div>')
+        html.append('<table class="table-auto w-full border-collapse border border-gray-300 mt-2">')
+        html.append('<thead><tr class="bg-gray-100">')
+        flight_fields = ["Airline", "Origin", "Destination", "Departure Date", "Arrival Date", "Passenger", "Ticket Number", "Amount", "Tax", "Total Amount"]
+        for field in flight_fields:
+            html.append(f'<th class="border border-gray-300 px-4 py-2">{field}</th>')
+        html.append('</tr></thead><tbody>')
+
+        for flight in invoice_data["flight_details"]:
+            html.append('<tr>')
+            flight_values = [
+                flight.get("airline"),
+                flight.get("origin"),
+                flight.get("destination"),
+                flight.get("departure_date"),
+                flight.get("arrival_date"),
+                flight.get("passenger"),
+                flight.get("ticket_number"),
+                flight.get("amount"),
+                flight.get("tax"),
+                flight.get("total_amount")
+            ]
+            for value in flight_values:
+                # Escape special characters in HTML
+                value = str(value).replace("<", "&lt;").replace(">", "&gt;") if value else "N/A"
+                html.append(f'<td class="border border-gray-300 px-4 py-2">{value}</td>')
+            html.append('</tr>')
+        html.append('</tbody></table></td></tr>')
+
+    html.append('</tbody></table></div>')
+    return "".join(html)

@@ -2,7 +2,7 @@ from Models.TravelSearchState import TravelSearchState
 from Utils.state_reset import reset_travel_state_for_new_search
 from Utils.intent_detection import detect_user_intent
 from Nodes.visa_rag_node import get_country
-from langchain_openai import ChatOpenAI
+from Utils.watson_config import llm  # Import Watson LLM instead of OpenAI
 import os
 
 def should_proceed_to_search(state: TravelSearchState) -> str:
@@ -55,9 +55,9 @@ def smart_router(state: TravelSearchState) -> str:
     elif intent == "visa_inquiry":
         user_message = state.get("current_message") or state.get("user_message", "")
         destination = state.get("destination")
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=os.getenv("OPENAI_API_KEY"))
         
-        country = get_country(llm, user_message, destination)
+        # Fixed: Remove the llm parameter since get_country only takes 2 arguments
+        country = get_country(user_message, destination)
         if country:
             print(f"Router: Visa inquiry for country - {country}")
             return "visa_rag"

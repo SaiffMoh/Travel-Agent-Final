@@ -1,11 +1,15 @@
 from Models.TravelSearchState import TravelSearchState
-from Utils.getLLM import get_text_llm
+from Utils.watson_config import llm  # Import Watsonx LLM client
 from Prompts.summary_prompt import summary_prompt
-from langchain.schema import HumanMessage
+import json
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def summarize_packages(state: TravelSearchState) -> TravelSearchState:
     """Generate LLM summary and recommendation for travel packages."""
-
     travel_packages = state.get("travel_packages", [])
 
     if not travel_packages or len(travel_packages) == 0:
@@ -21,9 +25,13 @@ def summarize_packages(state: TravelSearchState) -> TravelSearchState:
 
     try:
         llm_prompt = summary_prompt(package1, package2, package3, package4, package5, package6, package7)
-        response = get_text_llm().invoke([HumanMessage(content=llm_prompt)])
-        state["package_summary"] = response.content
-    except Exception:
+        prompt = f"<|SYSTEM|>{llm_prompt}<|USER|>Return the response as plain text, with no markdown or emojis.<|END|>"
+        logger.info(f"Watsonx summary prompt: {prompt[:500]}...")
+        response = llm.generate(prompt=prompt)
+        state["package_summary"] = response["results"][0]["generated_text"].strip()
+        logger.info(f"Watsonx summary response: {state['package_summary']}")
+    except Exception as e:
+        logger.error(f"Error summarizing packages: {e}")
         fallback_summary = create_fallback_summary(travel_packages)
         state["package_summary"] = fallback_summary
 
@@ -32,7 +40,6 @@ def summarize_packages(state: TravelSearchState) -> TravelSearchState:
 
 def create_fallback_summary(packages):
     """Create a basic summary if LLM fails."""
-
     if not packages:
         return "No travel packages available."
 

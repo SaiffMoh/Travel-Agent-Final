@@ -1,5 +1,3 @@
-# Prompts/llm_conversation.py - Enhanced prompt with fixed completion logic
-
 from datetime import datetime, timedelta
 from Models.TravelSearchState import TravelSearchState
 

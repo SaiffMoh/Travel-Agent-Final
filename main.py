@@ -266,17 +266,15 @@ async def get_active_threads():
 @app.post("/api/invoices/upload")
 async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
     """
-    Handle multiple PDF uploads for invoice processing and return HTML table.
+    Handle multiple PDF uploads for invoice processing and return results for all files.
     
     Args:
         files: List of PDF files to process
         thread_id: Thread ID to associate with the upload
         
     Returns:
-        HTML table or followup question
+        List of results for each file, including HTML table or error message
     """
-    # Removed: if not thread_id: raise (handled by Form(...))
-
     if not files:
         print("ERROR: No files provided")
         assistant_message = "No files uploaded. Please upload at least one PDF."
@@ -343,11 +341,7 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
             assistant_message = result.get("followup_question", "Invoice processed.")
             conversation_store.add_message(thread_id, "assistant", assistant_message)
 
-            if result.get("invoice_html"):
-                print(f"✓ Returning invoice_html for {file.filename}")
-                return result["invoice_html"]
-
-            html_content = question_to_html(assistant_message, ExtractedInfo())
+            html_content = result.get("invoice_html") or question_to_html(assistant_message, ExtractedInfo())
             results.append({
                 "filename": file.filename,
                 "status": "success" if result.get("extracted_invoice_data") else "error",
