@@ -92,7 +92,7 @@ def invoice_extraction_node(state: TravelSearchState) -> TravelSearchState:
 
         # Extract structured data using LLM
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": text}

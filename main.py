@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, Form  # Added Form
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -264,7 +264,7 @@ async def get_active_threads():
     return {"threads": threads, "count": len(threads)}
 
 @app.post("/api/invoices/upload")
-async def upload_invoice(files: List[UploadFile], thread_id: str = None):
+async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
     """
     Handle multiple PDF uploads for invoice processing and return HTML table.
     
@@ -275,9 +275,7 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = None):
     Returns:
         HTML table or followup question
     """
-    if not thread_id:
-        print("ERROR: Missing thread_id")
-        raise HTTPException(status_code=422, detail="thread_id is required")
+    # Removed: if not thread_id: raise (handled by Form(...))
 
     if not files:
         print("ERROR: No files provided")
