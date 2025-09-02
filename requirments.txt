@@ -16,3 +16,5 @@ pypdf
 python-multipart>=0.0.5
 pdfplumber>=0.6.2
 python-dateutil>=2.8.2
+langchain-community==0.3.29
+arabic-reshaper==3.0.0
