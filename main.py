@@ -13,6 +13,7 @@ from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
 from Nodes.invoice_extraction_node import invoice_extraction_node
+from fastapi.responses import HTMLResponse
 from pathlib import Path
 import shutil
 import uuid
@@ -263,58 +264,41 @@ async def get_active_threads():
     print(f"Getting active threads: {len(threads)} found")
     return {"threads": threads, "count": len(threads)}
 
-@app.post("/api/invoices/upload")
+@app.post("/api/invoices/upload", response_class=HTMLResponse)
 async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
     """
-    Handle multiple PDF uploads for invoice processing and return results for all files.
-    
-    Args:
-        files: List of PDF files to process
-        thread_id: Thread ID to associate with the upload
-        
-    Returns:
-        List of results for each file, including HTML table or error message
+    Handle multiple PDF uploads for invoice processing and return ONLY HTML.
     """
     if not files:
-        print("ERROR: No files provided")
-        assistant_message = "No files uploaded. Please upload at least one PDF."
-        conversation_store.add_message(thread_id, "assistant", assistant_message)
-        html_content = question_to_html(assistant_message, ExtractedInfo())
-        return [{
-            "filename": "none",
-            "status": "error",
-            "error": "No files uploaded",
-            "html": html_content
-        }]
+        return """
+        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p class="text-red-600">No files uploaded. Please upload at least one PDF.</p>
+        </div>
+        """
 
-    results = []
+    all_html = []
+    
     for file in files:
         temp_file_path = None
         try:
             if not file.filename.lower().endswith('.pdf'):
-                assistant_message = "Only PDF files are supported"
-                conversation_store.add_message(thread_id, "assistant", assistant_message)
-                html_content = question_to_html(assistant_message, ExtractedInfo())
-                results.append({
-                    "filename": file.filename,
-                    "status": "error",
-                    "error": "Only PDF files are supported",
-                    "html": html_content
-                })
+                all_html.append(f"""
+                <div class="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
+                    <p class="text-red-600">File '{file.filename}' is not a PDF. Only PDF files are supported.</p>
+                </div>
+                """)
                 continue
             
+            # Create temporary file
             filename = f"{uuid.uuid4()}_{file.filename}"
             temp_file_path = PDF_DIR / filename
             
             with open(temp_file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
-            conversation_history = conversation_store.get_conversation(thread_id)
-            previous_state = conversation_store.get_state(thread_id) or {}
-            
+            # Set up state for processing
             state = {
                 "thread_id": thread_id,
-                "conversation": conversation_history,
                 "current_message": f"Processing uploaded invoice: {file.filename}",
                 "user_message": f"Processing uploaded invoice: {file.filename}",
                 "needs_followup": True,
@@ -326,46 +310,41 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
                 "invoice_html": None
             }
             
-            print(f"Invoking graph for invoice processing: {file.filename}")
+            # Process through the graph
             result = graph.invoke(state)
-            print(f"Graph result for {file.filename}: {result}")
             
-            state_to_save = {
-                "invoice_uploaded": result.get("invoice_uploaded", False),
-                "invoice_pdf_path": result.get("invoice_pdf_path"),
-                "extracted_invoice_data": result.get("extracted_invoice_data"),
-                "invoice_html": result.get("invoice_html")
-            }
-            conversation_store.save_state(thread_id, state_to_save)
-
-            assistant_message = result.get("followup_question", "Invoice processed.")
-            conversation_store.add_message(thread_id, "assistant", assistant_message)
-
-            html_content = result.get("invoice_html") or question_to_html(assistant_message, ExtractedInfo())
-            results.append({
-                "filename": file.filename,
-                "status": "success" if result.get("extracted_invoice_data") else "error",
-                "data": result.get("extracted_invoice_data"),
-                "json_path": str(JSON_DIR / f"{thread_id}_{Path(temp_file_path).stem}.json"),
-                "html": html_content
-            })
+            # Extract ONLY the HTML
+            invoice_html = result.get("invoice_html", f"""
+            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p class="text-yellow-600">Invoice '{file.filename}' processed but no data extracted.</p>
+            </div>
+            """)
+            
+            # Add file header if multiple files
+            if len(files) > 1:
+                all_html.append(f"""
+                <div class="mb-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">File: {file.filename}</h3>
+                    {invoice_html}
+                </div>
+                """)
+            else:
+                all_html.append(invoice_html)
 
         except Exception as e:
-            print(f"ERROR: Exception processing {file.filename}: {e}")
-            assistant_message = f"Error processing invoice {file.filename}: {str(e)}"
-            conversation_store.add_message(thread_id, "assistant", assistant_message)
-            html_content = question_to_html(assistant_message, ExtractedInfo())
-            results.append({
-                "filename": file.filename if file else "unknown",
-                "status": "error",
-                "error": str(e),
-                "html": html_content
-            })
+            logging.error(f"Exception processing {file.filename}: {e}")
+            all_html.append(f"""
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
+                <p class="text-red-600">Error processing '{file.filename}': {str(e)}</p>
+            </div>
+            """)
         finally:
+            # Clean up temporary file
             if temp_file_path and temp_file_path.exists():
                 try:
                     temp_file_path.unlink()
                 except Exception as e:
-                    print(f"Error cleaning up file {temp_file_path}: {e}")
+                    logging.error(f"Error cleaning up file {temp_file_path}: {e}")
 
-    return results
+    # Return concatenated HTML for all files
+    return "".join(all_html)
