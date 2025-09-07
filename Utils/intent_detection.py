@@ -1,5 +1,5 @@
 from Models.TravelSearchState import TravelSearchState
-from langchain_openai import ChatOpenAI
+from Utils.watson_config import llm  # Import Watson LLM instead of OpenAI
 import os
 
 def detect_user_intent(state: TravelSearchState) -> str:
@@ -37,44 +37,43 @@ def detect_user_intent(state: TravelSearchState) -> str:
             print(f"Intent: Travel context detected with completion pattern in '{user_message}'")
             return "travel_search"
     
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0, api_key=os.getenv("OPENAI_API_KEY"))
-    
-    intent_prompt = f"""
-    Analyze this user message and determine their intent. Consider the conversation context.
-    
-    User message: "{user_message}"
-    
-    Previous travel search completed: {state.get("travel_search_completed", False)}
-    Current destination: {state.get("destination", "None")}
-    Has existing travel context: {has_travel_context}
-    
-    Classify the intent as ONE of these:
-    1. "travel_search" - User wants to search for flights/hotels/travel packages OR providing travel details
-    2. "visa_inquiry" - User is asking about visa requirements for a specific country
-    3. "general_conversation" - Other questions, greetings, or general chat
-    
-    IMPORTANT CONTEXT RULE:
-    - If has_travel_context=True and user provides ANY travel-related info (dates, numbers, cities, cabin class), classify as "travel_search"
-    - Numbers, dates, or single words when travel context exists should be "travel_search"
-    
-    Travel search indicators include:
-    - Mentioning cities, countries, or airports for travel
-    - Dates for departure/return
-    - Words like "flight", "hotel", "travel", "book", "search", "find"
-    - "I want to go to...", "I need flights to...", "from [city] to [city]"
-    - Providing missing travel details when prompted
-    - Numbers when asked about duration
-    
-    Visa inquiry indicators include:
-    - Words like "visa", "requirements", "documents", "embassy"
-    - "Do I need a visa for...", "What documents do I need for..."
-    
-    Respond with just one word: travel_search, visa_inquiry, or general_conversation
-    """
+    intent_prompt = f"""<|SYSTEM|>Analyze this user message and determine their intent. Consider the conversation context.
+
+User message: "{user_message}"
+
+Previous travel search completed: {state.get("travel_search_completed", False)}
+Current destination: {state.get("destination", "None")}
+Has existing travel context: {has_travel_context}
+
+Classify the intent as ONE of these:
+1. "travel_search" - User wants to search for flights/hotels/travel packages OR providing travel details
+2. "visa_inquiry" - User is asking about visa requirements for a specific country
+3. "general_conversation" - Other questions, greetings, or general chat
+
+IMPORTANT CONTEXT RULE:
+- If has_travel_context=True and user provides ANY travel-related info (dates, numbers, cities, cabin class), classify as "travel_search"
+- Numbers, dates, or single words when travel context exists should be "travel_search"
+
+Travel search indicators include:
+- Mentioning cities, countries, or airports for travel
+- Dates for departure/return
+- Words like "flight", "hotel", "travel", "book", "search", "find"
+- "I want to go to...", "I need flights to...", "from [city] to [city]"
+- Providing missing travel details when prompted
+- Numbers when asked about duration
+
+Visa inquiry indicators include:
+- Words like "visa", "requirements", "documents", "embassy"
+- "Do I need a visa for...", "What documents do I need for..."
+
+Respond with just one word: travel_search, visa_inquiry, or general_conversation
+<|USER|>Classify the intent for the above message.<|END|>"""
     
     try:
-        response = llm.invoke(intent_prompt)
-        intent = response.content.strip().lower()
+        response = llm.generate(prompt=intent_prompt)
+        raw_intent = response["results"][0]["generated_text"].strip()
+        # Clean the response - remove any trailing tokens like <|end|>
+        intent = raw_intent.split('<|')[0].strip().lower()
         print(f"Detected intent: {intent} for message: '{user_message}'")
         
         if intent == "travel_search":
