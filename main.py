@@ -348,3 +348,81 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
 
     # Return concatenated HTML for all files
     return "".join(all_html)
+
+
+    
+# Add these imports at the top of your main.py
+from Nodes.flight_inquiry_node import create_flight_inquiry_graph
+from fastapi.responses import HTMLResponse
+
+# Add this after your existing graph creation
+flight_inquiry_graph = create_flight_inquiry_graph().compile()
+
+# Add this new endpoint
+@app.post("/api/flight-inquiry", response_class=HTMLResponse)
+async def flight_inquiry_endpoint(request: ChatRequest):
+    """
+    Handle general flight inquiries - takes origin, destination, and date
+    Returns HTML for frontend display
+    """
+    try:
+        if not request.thread_id:
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: thread_id is required</p>
+            </div>
+            """
+        
+        user_message = request.user_msg.strip()
+        if not user_message:
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: user_msg cannot be empty</p>
+            </div>
+            """
+
+        # Check API keys
+        missing_keys = [key for key in required_keys if not os.getenv(key)]
+        if missing_keys:
+            return f"""
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Missing API keys: {', '.join(missing_keys)}</p>
+            </div>
+            """
+
+        # Set up state for flight inquiry
+        state = {
+            "thread_id": request.thread_id,
+            "current_message": user_message,
+            "user_message": user_message,
+            "needs_followup": True,
+            "ready_to_search": False,
+            "flight_options": [],
+            "search_error": None,
+            "flight_inquiry_html": None
+        }
+
+        print(f"Processing flight inquiry: {user_message}")
+        
+        # Execute the flight inquiry graph
+        result = flight_inquiry_graph.invoke(state)
+        
+        # Return the HTML content
+        html_content = result.get("flight_inquiry_html")
+        if not html_content:
+            html_content = """
+            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p class="text-yellow-600">Unable to process flight inquiry. Please try again.</p>
+            </div>
+            """
+        
+        return html_content
+
+    except Exception as e:
+        logger.error(f"Error in flight inquiry endpoint: {e}")
+        traceback.print_exc()
+        return f"""
+        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p class="text-red-600">Error processing flight inquiry: {str(e)}</p>
+        </div>
+        """
