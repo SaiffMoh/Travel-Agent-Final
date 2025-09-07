@@ -351,14 +351,14 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
 
 
     
-# Add these imports at the top of your main.py
-from Nodes.flight_inquiry_node import create_flight_inquiry_graph
 from fastapi.responses import HTMLResponse
+from Nodes.flight_inquiry_node import create_flight_inquiry_graph
+import traceback
+import logging
 
 # Add this after your existing graph creation
 flight_inquiry_graph = create_flight_inquiry_graph().compile()
 
-# Add this new endpoint
 @app.post("/api/flight-inquiry", response_class=HTMLResponse)
 async def flight_inquiry_endpoint(request: ChatRequest):
     """
@@ -382,6 +382,7 @@ async def flight_inquiry_endpoint(request: ChatRequest):
             """
 
         # Check API keys
+        required_keys = ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "OPENAI_API_KEY"]
         missing_keys = [key for key in required_keys if not os.getenv(key)]
         if missing_keys:
             return f"""
@@ -402,27 +403,177 @@ async def flight_inquiry_endpoint(request: ChatRequest):
             "flight_inquiry_html": None
         }
 
+        print(f"DEBUG: Initial state setup complete")
         print(f"Processing flight inquiry: {user_message}")
         
         # Execute the flight inquiry graph
         result = flight_inquiry_graph.invoke(state)
         
-        # Return the HTML content
-        html_content = result.get("flight_inquiry_html")
+        print(f"DEBUG: Graph execution complete")
+        print(f"DEBUG: Final result keys: {list(result.keys())}")
+        
+        # Enhanced debugging - check flight_options in result
+        flight_options = result.get("flight_options", [])
+        print(f"DEBUG: flight_options in result: {len(flight_options)} flights")
+        if flight_options:
+            print(f"DEBUG: First flight option: {flight_options[0] if flight_options else 'None'}")
+        
+        # Check for HTML content in various possible keys
+        html_content = None
+        possible_html_keys = ["flight_inquiry_html", "html_content", "formatted_html", "result_html"]
+        
+        for key in possible_html_keys:
+            if key in result and result[key]:
+                html_content = result[key]
+                print(f"DEBUG: Found HTML content in key '{key}'")
+                break
+        
+        # If no HTML found in expected keys, check all string values for HTML-like content
         if not html_content:
-            html_content = """
-            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p class="text-yellow-600">Unable to process flight inquiry. Please try again.</p>
+            print("DEBUG: No HTML content found in expected keys, checking all string values")
+            for key, value in result.items():
+                if isinstance(value, str) and ("<div" in value or "<html" in value or "class=" in value):
+                    html_content = value
+                    print(f"DEBUG: Found HTML-like content in key '{key}': {value[:100]}...")
+                    break
+        
+        # Handle specific error cases
+        if result.get("search_error"):
+            error_msg = result["search_error"]
+            print(f"DEBUG: Search error detected: {error_msg}")
+            html_content = f"""
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-red-700 mb-2">Flight Search Error</h3>
+                <p class="text-red-600 mb-2">We encountered an issue while searching for flights:</p>
+                <p class="text-sm text-red-500 bg-red-100 p-2 rounded">{error_msg}</p>
+                <p class="text-sm text-gray-600 mt-2">Please try again later or contact support if the problem persists.</p>
             </div>
             """
         
+        # Handle case where we have flight options but no HTML was generated
+        elif flight_options and not html_content:
+            print(f"DEBUG: Found {len(flight_options)} flights but no HTML generated, creating manual HTML")
+            
+            flights_html = ""
+            for i, flight in enumerate(flight_options[:5]):  # Show first 5 flights
+                flights_html += f"""
+                <div class="bg-white border rounded-lg p-4 mb-3 shadow-sm">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex-1">
+                            <span class="font-medium text-lg">{flight.get('airline', 'N/A')} {flight.get('flight_number', '')}</span>
+                            <span class="text-sm text-gray-600 ml-2">({flight.get('booking_class', 'Economy').title()})</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-xl font-bold text-green-600">{flight.get('price', 'N/A')} {flight.get('currency', 'EUR')}</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <span class="font-medium">From:</span> {flight.get('from', 'N/A')}
+                            <br>
+                            <span class="font-medium">Departure:</span> {flight.get('departure_time', 'N/A')[:16].replace('T', ' ')}
+                        </div>
+                        <div>
+                            <span class="font-medium">To:</span> {flight.get('to', 'N/A')}
+                            <br>
+                            <span class="font-medium">Arrival:</span> {flight.get('arrival_time', 'N/A')[:16].replace('T', ' ')}
+                        </div>
+                    </div>
+                    <div class="mt-2 text-sm text-gray-600">
+                        <span class="font-medium">Duration:</span> {flight.get('duration', 'N/A')} | 
+                        <span class="font-medium">Stops:</span> {flight.get('stops', 0)}
+                    </div>
+                </div>
+                """
+            
+            html_content = f"""
+            <div class="p-6 bg-white border rounded-lg shadow-sm">
+                <h3 class="text-xl font-semibold text-gray-800 mb-4">Flight Options</h3>
+                <div class="mb-4 p-3 bg-blue-50 rounded">
+                    <div class="grid grid-cols-3 gap-4 text-sm">
+                        <div><span class="font-medium">From:</span> {result.get('origin', 'N/A')}</div>
+                        <div><span class="font-medium">To:</span> {result.get('destination', 'N/A')}</div>
+                        <div><span class="font-medium">Date:</span> {result.get('departure_date', 'N/A')}</div>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    {flights_html}
+                </div>
+                {f'<p class="text-sm text-gray-600 mt-4">Showing {min(5, len(flight_options))} of {len(flight_options)} available flights</p>' if len(flight_options) > 5 else ''}
+            </div>
+            """
+        
+        # Handle case where extraction was successful but no flights found
+        elif result.get("origin") and result.get("destination") and result.get("departure_date"):
+            origin = result["origin"]
+            destination = result["destination"]
+            date = result["departure_date"]
+            
+            if not html_content:
+                html_content = f"""
+                <div class="p-6 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h3 class="text-lg font-semibold text-blue-700 mb-3">Flight Search Summary</h3>
+                    <div class="space-y-2 mb-4">
+                        <p><span class="font-medium">From:</span> {origin}</p>
+                        <p><span class="font-medium">To:</span> {destination}</p>
+                        <p><span class="font-medium">Date:</span> {date}</p>
+                    </div>
+                    <div class="bg-yellow-100 border border-yellow-300 rounded p-3">
+                        <p class="text-yellow-700">No flights found or search service temporarily unavailable.</p>
+                        <p class="text-sm text-yellow-600 mt-1">Please try again later or modify your search criteria.</p>
+                        <details class="mt-2">
+                            <summary class="text-xs cursor-pointer">Debug Info</summary>
+                            <pre class="text-xs mt-1 bg-yellow-50 p-2 rounded overflow-auto">
+Flight options count: {len(flight_options)}
+Available result keys: {', '.join(result.keys())}
+                            </pre>
+                        </details>
+                    </div>
+                </div>
+                """
+        
+        # Handle case where followup is needed
+        elif result.get("needs_followup") and result.get("followup_question"):
+            question = result["followup_question"]
+            html_content = f"""
+            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-blue-700 mb-2">More Information Needed</h3>
+                <p class="text-blue-600">{question}</p>
+            </div>
+            """
+        
+        # Final fallback
+        if not html_content:
+            print("DEBUG: No HTML content generated, using fallback")
+            html_content = f"""
+            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-yellow-700 mb-2">Processing Flight Inquiry</h3>
+                <p class="text-yellow-600 mb-2">Your request: "{user_message}"</p>
+                <p class="text-sm text-gray-600">The system processed your request but couldn't generate the display.</p>
+                <details class="mt-3">
+                    <summary class="text-xs text-gray-500 cursor-pointer">Debug Info</summary>
+                    <pre class="text-xs text-gray-400 mt-1 bg-gray-100 p-2 rounded overflow-auto">
+Available keys: {', '.join(result.keys())}
+Flight options: {len(flight_options)}
+                    </pre>
+                </details>
+            </div>
+            """
+        
+        print(f"DEBUG: Returning HTML content of length: {len(html_content)}")
         return html_content
 
     except Exception as e:
-        logger.error(f"Error in flight inquiry endpoint: {e}")
+        print(f"Error in flight inquiry endpoint: {e}")
         traceback.print_exc()
         return f"""
         <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p class="text-red-600">Error processing flight inquiry: {str(e)}</p>
+            <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
+            <p class="text-red-600 mb-2">An unexpected error occurred while processing your flight inquiry.</p>
+            <details class="mt-2">
+                <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
+                <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>
+            </details>
+            <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
         </div>
         """

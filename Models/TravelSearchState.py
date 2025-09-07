@@ -86,3 +86,4 @@ class TravelSearchState(TypedDict, total=False):
     package_results: Optional[Any]
     # Visa info
     visa_info_html: Optional[str]
+    flight_options: Optional[str]
