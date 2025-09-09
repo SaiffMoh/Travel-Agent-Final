@@ -120,7 +120,7 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
         return None
 
 def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a summary of flight information."""
+    """Create a summary of flight information with enhanced details."""
 
     try:
         itineraries = flight.get("itineraries", [])
@@ -129,6 +129,7 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
 
         summary = {
             "trip_type": "round_trip" if len(itineraries) > 1 else "one_way",
+            "numberOfBookableSeats": flight.get("numberOfBookableSeats", 0),
             "outbound": None,
             "return": None
         }
@@ -139,6 +140,32 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
         if outbound_segments:
             first_segment = outbound_segments[0]
             last_segment = outbound_segments[-1]
+
+            # Extract flight details from segments
+            outbound_flight_details = []
+            for segment in outbound_segments:
+                flight_detail = {
+                    "carrierCode": segment.get("carrierCode", ""),
+                    "number": segment.get("number", ""),
+                    "aircraft": {
+                        "code": segment.get("aircraft", {}).get("code", "")
+                    },
+                    "operating": {
+                        "carrierCode": segment.get("operating", {}).get("carrierCode", "")
+                    },
+                    "departure": {
+                        "airport": segment.get("departure", {}).get("iataCode", ""),
+                        "time": segment.get("departure", {}).get("at", ""),
+                        "terminal": segment.get("departure", {}).get("terminal", "")
+                    },
+                    "arrival": {
+                        "airport": segment.get("arrival", {}).get("iataCode", ""),
+                        "time": segment.get("arrival", {}).get("at", ""),
+                        "terminal": segment.get("arrival", {}).get("terminal", "")
+                    },
+                    "duration": segment.get("duration", "")
+                }
+                outbound_flight_details.append(flight_detail)
 
             summary["outbound"] = {
                 "departure": {
@@ -152,7 +179,8 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
                     "terminal": last_segment.get("arrival", {}).get("terminal", "")
                 },
                 "duration": outbound.get("duration", ""),
-                "stops": len(outbound_segments) - 1
+                "stops": len(outbound_segments) - 1,
+                "flight_details": outbound_flight_details
             }
 
         if len(itineraries) > 1:
@@ -162,6 +190,32 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
             if return_segments:
                 first_return = return_segments[0]
                 last_return = return_segments[-1]
+
+                # Extract return flight details from segments
+                return_flight_details = []
+                for segment in return_segments:
+                    flight_detail = {
+                        "carrierCode": segment.get("carrierCode", ""),
+                        "number": segment.get("number", ""),
+                        "aircraft": {
+                            "code": segment.get("aircraft", {}).get("code", "")
+                        },
+                        "operating": {
+                            "carrierCode": segment.get("operating", {}).get("carrierCode", "")
+                        },
+                        "departure": {
+                            "airport": segment.get("departure", {}).get("iataCode", ""),
+                            "time": segment.get("departure", {}).get("at", ""),
+                            "terminal": segment.get("departure", {}).get("terminal", "")
+                        },
+                        "arrival": {
+                            "airport": segment.get("arrival", {}).get("iataCode", ""),
+                            "time": segment.get("arrival", {}).get("at", ""),
+                            "terminal": segment.get("arrival", {}).get("terminal", "")
+                        },
+                        "duration": segment.get("duration", "")
+                    }
+                    return_flight_details.append(flight_detail)
 
                 summary["return"] = {
                     "departure": {
@@ -175,7 +229,8 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
                         "terminal": last_return.get("arrival", {}).get("terminal", "")
                     },
                     "duration": return_itinerary.get("duration", ""),
-                    "stops": len(return_segments) - 1
+                    "stops": len(return_segments) - 1,
+                    "flight_details": return_flight_details
                 }
 
         return summary

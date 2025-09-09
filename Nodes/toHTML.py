@@ -221,82 +221,143 @@ def generate_pricing_table(pricing: dict) -> str:
     """
 
 def generate_flight_offers_table(flight_offers: List[dict]) -> str:
-    """Generate table for all flight offers."""
+    """Generate table for all flight offers with enhanced details."""
 
     html_parts = [f'<div class="section-title">✈️ Flight Offers</div>']
 
     if not flight_offers:
         return '<div class="section-title">✈️ Flight Offers</div><p>No flight information available.</p>'
 
-    html_parts.append(f"""
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Flight</th>
-                <th>Route</th>
-                <th>Departure</th>
-                <th>Arrival</th>
-                <th>Duration</th>
-                <th>Stops</th>
-                <th>Price</th>
-                <th>Currency</th>
-            </tr>
-        </thead>
-        <tbody>
-    """)
-
-    for flight_info in flight_offers:
+    for flight_idx, flight_info in enumerate(flight_offers):
         summary = flight_info.get("summary", {})
         price = flight_info.get("price", 0)
         currency = flight_info.get("currency", "")
+        bookable_seats = summary.get("numberOfBookableSeats", 0)
 
+        html_parts.append(f"""
+        <div class="flight-offer" style="margin-bottom: 25px; border: 1px solid #ddd; border-radius: 8px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h4>Flight Option {flight_idx + 1}</h4>
+                <div style="text-align: right;">
+                    <div class="price-cell">{price:,.2f} {currency}</div>
+                    <div style="font-size: 12px; color: #666;">Available Seats: {bookable_seats}</div>
+                </div>
+            </div>
+
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Direction</th>
+                        <th>Flight Details</th>
+                        <th>Route</th>
+                        <th>Departure</th>
+                        <th>Arrival</th>
+                        <th>Aircraft</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """)
+
+        # Outbound flights
         outbound = summary.get("outbound")
         if outbound:
-            departure = outbound.get("departure", {})
-            arrival = outbound.get("arrival", {})
-            duration = outbound.get("duration", "N/A")
-            stops = outbound.get("stops", 0)
+            flight_details = outbound.get("flight_details", [])
+            
+            for seg_idx, flight_detail in enumerate(flight_details):
+                carrier_code = flight_detail.get("carrierCode", "")
+                flight_number = flight_detail.get("number", "")
+                aircraft_code = flight_detail.get("aircraft", {}).get("code", "")
+                operating_carrier = flight_detail.get("operating", {}).get("carrierCode", "")
+                
+                departure = flight_detail.get("departure", {})
+                arrival = flight_detail.get("arrival", {})
+                duration = flight_detail.get("duration", "")
+                
+                dep_time = format_datetime(departure.get("time", ""))
+                arr_time = format_datetime(arrival.get("time", ""))
+                route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
+                
+                direction_label = f"Outbound" if seg_idx == 0 else f"Outbound (Seg {seg_idx + 1})"
+                
+                # Flight details display
+                flight_info_display = f"{carrier_code} {flight_number}"
+                if operating_carrier and operating_carrier != carrier_code:
+                    flight_info_display += f" (operated by {operating_carrier})"
+                
+                aircraft_display = aircraft_code if aircraft_code else "N/A"
+                
+                html_parts.append(f"""
+                <tr>
+                    <td><strong>{direction_label}</strong></td>
+                    <td>
+                        <div style="font-weight: 600;">{flight_info_display}</div>
+                        <div style="font-size: 12px; color: #666;">Carrier: {carrier_code}</div>
+                    </td>
+                    <td class="route-info">{route}</td>
+                    <td>
+                        <div>{dep_time}</div>
+                        <div style="font-size: 12px; color: #666;">Terminal {departure.get('terminal', 'N/A')}</div>
+                    </td>
+                    <td>
+                        <div>{arr_time}</div>
+                        <div style="font-size: 12px; color: #666;">Terminal {arrival.get('terminal', 'N/A')}</div>
+                    </td>
+                    <td>{aircraft_display}</td>
+                    <td>{duration}</td>
+                </tr>
+                """)
 
-            dep_time = format_datetime(departure.get("time", ""))
-            arr_time = format_datetime(arrival.get("time", ""))
-            route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
-
-            html_parts.append(f"""
-            <tr>
-                <td><strong>Outbound</strong><br><span class="duration-info">{dep_time}</span></td>
-                <td class="route-info">{route}</td>
-                <td>Terminal {departure.get('terminal', 'N/A')}<br>{dep_time}</td>
-                <td>Terminal {arrival.get('terminal', 'N/A')}<br>{arr_time}</td>
-                <td>{duration}</td>
-                <td>{"Direct" if stops == 0 else f"{stops} stop{'s' if stops != 1 else ''}"}</td>
-                <td rowspan="2" class="price-cell">{price:,.2f}</td>
-                <td rowspan="2">{currency}</td>
-            </tr>
-            """)
-
+        # Return flights
         return_flight = summary.get("return")
         if return_flight:
-            departure = return_flight.get("departure", {})
-            arrival = return_flight.get("arrival", {})
-            duration = return_flight.get("duration", "N/A")
-            stops = return_flight.get("stops", 0)
+            flight_details = return_flight.get("flight_details", [])
+            
+            for seg_idx, flight_detail in enumerate(flight_details):
+                carrier_code = flight_detail.get("carrierCode", "")
+                flight_number = flight_detail.get("number", "")
+                aircraft_code = flight_detail.get("aircraft", {}).get("code", "")
+                operating_carrier = flight_detail.get("operating", {}).get("carrierCode", "")
+                
+                departure = flight_detail.get("departure", {})
+                arrival = flight_detail.get("arrival", {})
+                duration = flight_detail.get("duration", "")
+                
+                dep_time = format_datetime(departure.get("time", ""))
+                arr_time = format_datetime(arrival.get("time", ""))
+                route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
+                
+                direction_label = f"Return" if seg_idx == 0 else f"Return (Seg {seg_idx + 1})"
+                
+                # Flight details display
+                flight_info_display = f"{carrier_code} {flight_number}"
+                if operating_carrier and operating_carrier != carrier_code:
+                    flight_info_display += f" (operated by {operating_carrier})"
+                
+                aircraft_display = aircraft_code if aircraft_code else "N/A"
+                
+                html_parts.append(f"""
+                <tr>
+                    <td><strong>{direction_label}</strong></td>
+                    <td>
+                        <div style="font-weight: 600;">{flight_info_display}</div>
+                        <div style="font-size: 12px; color: #666;">Carrier: {carrier_code}</div>
+                    </td>
+                    <td class="route-info">{route}</td>
+                    <td>
+                        <div>{dep_time}</div>
+                        <div style="font-size: 12px; color: #666;">Terminal {departure.get('terminal', 'N/A')}</div>
+                    </td>
+                    <td>
+                        <div>{arr_time}</div>
+                        <div style="font-size: 12px; color: #666;">Terminal {arrival.get('terminal', 'N/A')}</div>
+                    </td>
+                    <td>{aircraft_display}</td>
+                    <td>{duration}</td>
+                </tr>
+                """)
 
-            dep_time = format_datetime(departure.get("time", ""))
-            arr_time = format_datetime(arrival.get("time", ""))
-            route = f"{departure.get('airport', 'N/A')} → {arrival.get('airport', 'N/A')}"
-
-            html_parts.append(f"""
-            <tr>
-                <td><strong>Return</strong><br><span class="duration-info">{dep_time}</span></td>
-                <td class="route-info">{route}</td>
-                <td>Terminal {departure.get('terminal', 'N/A')}<br>{dep_time}</td>
-                <td>Terminal {arrival.get('terminal', 'N/A')}<br>{arr_time}</td>
-                <td>{duration}</td>
-                <td>{"Direct" if stops == 0 else f"{stops} stop{'s' if stops != 1 else ''}"}</td>
-            </tr>
-            """)
-
-    html_parts.append("</tbody></table>")
+        html_parts.append("</tbody></table></div>")
 
     return "".join(html_parts)
 
