@@ -22,124 +22,6 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
 
     html_parts = []
 
-    html_parts.append("""
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 20px;
-            line-height: 1.6;
-        }
-        .travel-summary {
-            border: 1px solid var(--border-color, #ddd);
-            padding: 20px;
-            margin-bottom: 30px;
-            border-radius: 8px;
-            border-left: 4px solid var(--accent-color, #007bff);
-        }
-        .package-container {
-            margin-bottom: 30px;
-            border: 1px solid var(--border-color, #ddd);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        .package-header {
-            background: linear-gradient(135deg, var(--header-bg, #f8f9fa), var(--header-bg-alt, #e9ecef));
-            padding: 15px 20px;
-            font-size: 18px;
-            font-weight: 600;
-            border-bottom: 1px solid var(--border-color, #ddd);
-        }
-        .package-content { padding: 25px; }
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 25px;
-            border: 1px solid var(--border-color, #ddd);
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .data-table th {
-            background: var(--table-header-bg, #f8f9fa);
-            padding: 12px 15px;
-            text-align: left;
-            font-weight: 600;
-            border-bottom: 2px solid var(--border-color, #ddd);
-            font-size: 14px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .data-table td {
-            padding: 12px 15px;
-            border-bottom: 1px solid var(--border-light, #eee);
-            vertical-align: top;
-        }
-        .data-table tr:nth-child(even) {
-            background: var(--table-row-alt, #f9f9f9);
-        }
-        .data-table tr:hover {
-            background: var(--table-row-hover, #f0f0f0);
-        }
-        .price-cell {
-            font-weight: bold;
-            font-size: 16px;
-        }
-        .section-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin: 25px 0 15px 0;
-            padding-bottom: 8px;
-            border-bottom: 2px solid var(--accent-color, #007bff);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .no-packages {
-            text-align: center;
-            padding: 40px;
-            font-style: italic;
-            font-size: 16px;
-        }
-        .status-badge {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            text-transform: uppercase;
-        }
-        .available {
-            background: var(--success-bg, #d4edda);
-            color: var(--success-text, #155724);
-        }
-        .route-info {
-            font-family: monospace;
-            font-weight: 500;
-            font-size: 14px;
-        }
-        .duration-info {
-            font-size: 13px;
-            opacity: 0.8;
-        }
-        .hotel-name {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        .room-description {
-            font-size: 13px;
-            opacity: 0.8;
-            line-height: 1.4;
-        }
-        .currency-note {
-            background: #fff3cd;
-            color: #856404;
-            padding: 10px;
-            border-radius: 4px;
-            font-size: 14px;
-            border: 1px solid #ffeaa7;
-            margin-bottom: 15px;
-        }
-    </style>
-    """)
-
     if summary:
         html_parts.append(f"""
         <div class="travel-summary">
@@ -212,13 +94,13 @@ def generate_pricing_table(pricing: dict) -> str:
         <tbody>
             <tr>
                 <td><strong>Flight (Round Trip)</strong></td>
-                <td class="price-cell">{flight_price:,.2f}</td>
+                <td>{flight_price:,.2f}</td>
                 <td>{flight_currency}</td>
                 <td>Complete round trip airfare</td>
             </tr>
             <tr>
                 <td><strong>Hotel (Starting from)</strong></td>
-                <td class="price-cell">{hotel_price:,.2f}</td>
+                <td>{hotel_price:,.2f}</td>
                 <td>{hotel_currency}</td>
                 <td>Per stay, varies by selection</td>
             </tr>
@@ -241,12 +123,12 @@ def generate_flight_offers_table(flight_offers: List[dict]) -> str:
         bookable_seats = summary.get("numberOfBookableSeats", 0)
 
         html_parts.append(f"""
-        <div class="flight-offer" style="margin-bottom: 25px; border: 1px solid #ddd; border-radius: 8px; padding: 20px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <div class="flight-offer">
+            <div class="flight-header">
                 <h4>Flight Option {flight_idx + 1}</h4>
-                <div style="text-align: right;">
-                    <div class="price-cell">{price:,.2f} {currency}</div>
-                    <div style="font-size: 12px; color: #666;">Available Seats: {bookable_seats}</div>
+                <div class="flight-price">
+                    <div>{price:,.2f} {currency}</div>
+                    <div>Available Seats: {bookable_seats}</div>
                 </div>
             </div>
 
@@ -297,17 +179,17 @@ def generate_flight_offers_table(flight_offers: List[dict]) -> str:
                 <tr>
                     <td><strong>{direction_label}</strong></td>
                     <td>
-                        <div style="font-weight: 600;">{flight_info_display}</div>
-                        <div style="font-size: 12px; color: #666;">Carrier: {carrier_code}</div>
+                        <div>{flight_info_display}</div>
+                        <div>Carrier: {carrier_code}</div>
                     </td>
-                    <td class="route-info">{route}</td>
+                    <td>{route}</td>
                     <td>
                         <div>{dep_time}</div>
-                        <div style="font-size: 12px; color: #666;">Terminal {departure.get('terminal', 'N/A')}</div>
+                        <div>Terminal {departure.get('terminal', 'N/A')}</div>
                     </td>
                     <td>
                         <div>{arr_time}</div>
-                        <div style="font-size: 12px; color: #666;">Terminal {arrival.get('terminal', 'N/A')}</div>
+                        <div>Terminal {arrival.get('terminal', 'N/A')}</div>
                     </td>
                     <td>{aircraft_display}</td>
                     <td>{duration}</td>
@@ -346,17 +228,17 @@ def generate_flight_offers_table(flight_offers: List[dict]) -> str:
                 <tr>
                     <td><strong>{direction_label}</strong></td>
                     <td>
-                        <div style="font-weight: 600;">{flight_info_display}</div>
-                        <div style="font-size: 12px; color: #666;">Carrier: {carrier_code}</div>
+                        <div>{flight_info_display}</div>
+                        <div>Carrier: {carrier_code}</div>
                     </td>
-                    <td class="route-info">{route}</td>
+                    <td>{route}</td>
                     <td>
                         <div>{dep_time}</div>
-                        <div style="font-size: 12px; color: #666;">Terminal {departure.get('terminal', 'N/A')}</div>
+                        <div>Terminal {departure.get('terminal', 'N/A')}</div>
                     </td>
                     <td>
                         <div>{arr_time}</div>
-                        <div style="font-size: 12px; color: #666;">Terminal {arrival.get('terminal', 'N/A')}</div>
+                        <div>Terminal {arrival.get('terminal', 'N/A')}</div>
                     </td>
                     <td>{aircraft_display}</td>
                     <td>{duration}</td>
@@ -413,16 +295,16 @@ def generate_hotel_table(hotel_info: dict) -> str:
                 if len(room_description) > 100:
                     room_description = room_description[:97] + "..."
 
-                availability_badge = '<span class="status-badge available">Available</span>' if is_available else '<span class="status-badge">Not Available</span>'
+                availability_badge = 'Available' if is_available else 'Not Available'
 
                 html_parts.append(f"""
                 <tr>
-                    <td><div class="hotel-name">{escape(hotel_name)}</div></td>
+                    <td><div>{escape(hotel_name)}</div></td>
                     <td>
                         <div><strong>{escape(room_type)}</strong></div>
-                        <div class="room-description">{escape(room_description)}</div>
+                        <div>{escape(room_description)}</div>
                     </td>
-                    <td class="price-cell">{offer_price:,.2f}</td>
+                    <td>{offer_price:,.2f}</td>
                     <td>{currency}</td>
                     <td>{availability_badge}</td>
                 </tr>
@@ -430,11 +312,11 @@ def generate_hotel_table(hotel_info: dict) -> str:
             else:
                 html_parts.append(f"""
                 <tr>
-                    <td><div class="hotel-name">{escape(hotel_name)}</div></td>
+                    <td><div>{escape(hotel_name)}</div></td>
                     <td>No room details available</td>
                     <td>-</td>
                     <td>-</td>
-                    <td><span class="status-badge">No Offers</span></td>
+                    <td>No Offers</td>
                 </tr>
                 """)
 
@@ -475,13 +357,13 @@ def generate_hotel_table(hotel_info: dict) -> str:
                 contacts = best_offer.get("contacts", "N/A")
                 notes = best_offer.get("notes", "None")
 
-                availability_badge = '<span class="status-badge available">Available</span>' if is_available else '<span class="status-badge">Not Available</span>'
+                availability_badge = 'Available' if is_available else 'Not Available'
 
                 html_parts.append(f"""
                 <tr>
-                    <td><div class="hotel-name">{escape(hotel_name)}</div></td>
+                    <td><div>{escape(hotel_name)}</div></td>
                     <td><strong>{escape(room_type)}</strong></td>
-                    <td class="price-cell">{offer_price:,.2f}</td>
+                    <td>{offer_price:,.2f}</td>
                     <td>{currency}</td>
                     <td>{escape(contacts)}</td>
                     <td>{escape(notes)}</td>
@@ -491,13 +373,13 @@ def generate_hotel_table(hotel_info: dict) -> str:
             else:
                 html_parts.append(f"""
                 <tr>
-                    <td><div class="hotel-name">{escape(hotel_name)}</div></td>
+                    <td><div>{escape(hotel_name)}</div></td>
                     <td>No room details</td>
                     <td>-</td>
                     <td>-</td>
                     <td>{escape(hotel.get("contacts", "N/A"))}</td>
                     <td>{escape(hotel.get("notes", "None"))}</td>
-                    <td><span class="status-badge">No Offers</span></td>
+                    <td>No Offers</td>
                 </tr>
                 """)
 

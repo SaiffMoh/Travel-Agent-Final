@@ -10,14 +10,14 @@ def invoice_to_html(invoice_data: Dict[str, Any]) -> str:
             return "<br>".join(f"{k}: {format_value(v)}" for k, v in value.items() if v is not None)
         return str(value) if value is not None else ""
 
-    # Start HTML table with Tailwind CSS for styling
+    # Start HTML table
     html = """
-    <div class="overflow-x-auto">
-        <table class="min-w-full border-collapse border border-gray-300">
-            <thead class="bg-gray-100">
+    <div class="invoice-container">
+        <table class="invoice-table">
+            <thead class="invoice-header">
                 <tr>
-                    <th class="border border-gray-300 px-4 py-2 text-left">Field</th>
-                    <th class="border border-gray-300 px-4 py-2 text-left">Value</th>
+                    <th class="field-header">Field</th>
+                    <th class="value-header">Value</th>
                 </tr>
             </thead>
             <tbody>
@@ -41,50 +41,50 @@ def invoice_to_html(invoice_data: Dict[str, Any]) -> str:
     for display_name, key in fields:
         if key in invoice_data and invoice_data[key] is not None:
             html += f"""
-                <tr>
-                    <td class="border border-gray-300 px-4 py-2">{display_name}</td>
-                    <td class="border border-gray-300 px-4 py-2">{format_value(invoice_data[key])}</td>
+                <tr class="invoice-row">
+                    <td class="field-cell">{display_name}</td>
+                    <td class="value-cell">{format_value(invoice_data[key])}</td>
                 </tr>
             """
 
     # Handle flight_details as a nested table
     if "flight_details" in invoice_data and invoice_data["flight_details"]:
         html += """
-            <tr>
-                <td class="border border-gray-300 px-4 py-2">Flight Details</td>
-                <td class="border border-gray-300 px-4 py-2">
-                    <table class="min-w-full border-collapse border border-gray-200">
-                        <thead class="bg-gray-50">
+            <tr class="invoice-row">
+                <td class="field-cell">Flight Details</td>
+                <td class="value-cell">
+                    <table class="flight-details-table">
+                        <thead class="flight-header">
                             <tr>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Airline</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Origin</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Destination</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Departure Date</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Arrival Date</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Service Type</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Passenger</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Ticket Number</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Amount</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Tax</th>
-                                <th class="border border-gray-200 px-2 py-1 text-left">Total Amount</th>
+                                <th class="flight-column">Airline</th>
+                                <th class="flight-column">Origin</th>
+                                <th class="flight-column">Destination</th>
+                                <th class="flight-column">Departure Date</th>
+                                <th class="flight-column">Arrival Date</th>
+                                <th class="flight-column">Service Type</th>
+                                <th class="flight-column">Passenger</th>
+                                <th class="flight-column">Ticket Number</th>
+                                <th class="flight-column">Amount</th>
+                                <th class="flight-column">Tax</th>
+                                <th class="flight-column">Total Amount</th>
                             </tr>
                         </thead>
                         <tbody>
         """
         for flight in invoice_data["flight_details"]:
             html += f"""
-                <tr>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('airline'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('origin'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('destination'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('departure_date'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('arrival_date'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('service_type'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('passenger'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('ticket_number'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('amount'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('tax'))}</td>
-                    <td class="border border-gray-200 px-2 py-1">{format_value(flight.get('total_amount'))}</td>
+                <tr class="flight-row">
+                    <td class="flight-cell">{format_value(flight.get('airline'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('origin'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('destination'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('departure_date'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('arrival_date'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('service_type'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('passenger'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('ticket_number'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('amount'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('tax'))}</td>
+                    <td class="flight-cell">{format_value(flight.get('total_amount'))}</td>
                 </tr>
             """
         html += """

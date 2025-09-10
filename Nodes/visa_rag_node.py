@@ -179,18 +179,14 @@ def visa_rag_node(state: TravelSearchState) -> TravelSearchState:
     visa_answer = rag.answer_query(query)
     
     visa_html = f"""
-    <div class="visa-section" style="font-family: Arial, sans-serif; max-width: 800px; margin: 20px 0;">
-        <h3 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-            Visa Requirements for {country}
-        </h3>
-        <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0;">
+    <div class="visa-section">
+        <h3>Visa Requirements for {country}</h3>
+        <div class="visa-content">
             {format_markdown_to_html(visa_answer)}
         </div>
-        <div style="margin-top: 20px; padding: 15px; background-color: #eff6ff; border-radius: 8px; border-left: 4px solid #3b82f6;">
-            <p style="margin: 0; color: #1e40af;">
-                <strong>Need help with travel planning?</strong> I can also help you search for flights, hotels, 
-                and travel packages. Just let me know where you'd like to go!
-            </p>
+        <div class="travel-help-note">
+            <p><strong>Need help with travel planning?</strong> I can also help you search for flights, hotels, 
+            and travel packages. Just let me know where you'd like to go!</p>
         </div>
     </div>
     """
