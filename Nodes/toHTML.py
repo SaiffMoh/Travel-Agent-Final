@@ -128,6 +128,15 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             opacity: 0.8;
             line-height: 1.4;
         }
+        .currency-note {
+            background: #fff3cd;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            border: 1px solid #ffeaa7;
+            margin-bottom: 15px;
+        }
     </style>
     """)
 
@@ -179,15 +188,18 @@ def generate_package_html(package: dict, package_num: int) -> str:
     return "".join(html_parts)
 
 def generate_pricing_table(pricing: dict) -> str:
-    """Generate pricing summary table."""
+    """Generate pricing summary table with separate currencies."""
 
-    total_price = pricing.get("total_min_price", 0)
-    currency = pricing.get("currency", "")
     flight_price = pricing.get("flight_price", 0)
+    flight_currency = pricing.get("flight_currency", "")
     hotel_price = pricing.get("min_hotel_price", 0)
+    hotel_currency = pricing.get("hotel_currency", "N/A")
 
     return f"""
     <div class="section-title">💰 Pricing Summary</div>
+    <div class="currency-note">
+        ⚠️ Note: Flight and hotel prices are in different currencies and cannot be combined directly.
+    </div>
     <table class="data-table">
         <thead>
             <tr>
@@ -199,21 +211,15 @@ def generate_pricing_table(pricing: dict) -> str:
         </thead>
         <tbody>
             <tr>
-                <td><strong>Total Package</strong></td>
-                <td class="price-cell">{total_price:,.2f}</td>
-                <td>{currency}</td>
-                <td>Flight only (hotels separate)</td>
-            </tr>
-            <tr>
-                <td>Flight</td>
+                <td><strong>Flight (Round Trip)</strong></td>
                 <td class="price-cell">{flight_price:,.2f}</td>
-                <td>{currency}</td>
-                <td>Cheapest round trip</td>
+                <td>{flight_currency}</td>
+                <td>Complete round trip airfare</td>
             </tr>
             <tr>
-                <td>Hotel (Starting from)</td>
+                <td><strong>Hotel (Starting from)</strong></td>
                 <td class="price-cell">{hotel_price:,.2f}</td>
-                <td>{currency}</td>
+                <td>{hotel_currency}</td>
                 <td>Per stay, varies by selection</td>
             </tr>
         </tbody>

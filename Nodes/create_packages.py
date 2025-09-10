@@ -57,13 +57,14 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
         api_hotels_sorted = sorted(api_hotels, key=get_hotel_price)
         company_hotels_sorted = sorted(company_hotels, key=get_hotel_price)
 
+        # Get the cheapest hotel price and its currency
         min_hotel_price = 0
-        hotel_currency = flight_currency
+        hotel_currency = "N/A"
         if available_hotels:
             cheapest_hotel = min(available_hotels, key=get_hotel_price)
             if cheapest_hotel.get("best_offers"):
                 min_hotel_price = float(cheapest_hotel["best_offers"][0]["offer"].get("price", {}).get("total", 0))
-                hotel_currency = cheapest_hotel["best_offers"][0].get("currency", flight_currency)
+                hotel_currency = cheapest_hotel["best_offers"][0].get("currency", "N/A")
 
         flight_offers = [
             {
@@ -89,14 +90,14 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                     "available_count": len([h for h in api_hotels if h.get("available", True)]),
                     "top_options": api_hotels_sorted[:5],
                     "min_price": min([get_hotel_price(h) for h in api_hotels] or [0]),
-                    "currency": hotel_currency
+                    "currency": hotel_currency if api_hotels else "N/A"
                 },
                 "company_hotels": {
                     "total_found": len(company_hotels),
                     "available_count": len([h for h in company_hotels if h.get("available", True)]),
                     "top_options": company_hotels_sorted[:5],
                     "min_price": min([get_hotel_price(h) for h in company_hotels] or [0]),
-                    "currency": hotel_currency
+                    "currency": hotel_currency if company_hotels else "N/A"
                 },
                 "total_found": total_hotels,
                 "available_count": len(available_hotels),
@@ -105,9 +106,11 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
             },
             "pricing": {
                 "flight_price": flight_price,
+                "flight_currency": flight_currency,
                 "min_hotel_price": min_hotel_price,
-                "total_min_price": flight_price + min_hotel_price,
-                "currency": flight_currency
+                "hotel_currency": hotel_currency,
+                # Remove total_min_price since currencies are different
+                "note": "Prices in different currencies - not combined"
             },
             "package_summary": f"Package {package_id}: {duration_nights} nights, "
                               f"flight price {flight_price:,.2f} {flight_currency}, "
