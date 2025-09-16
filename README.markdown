@@ -1,6 +1,6 @@
 # Travel Agent API
 
-Welcome to the **Travel Agent API**, an AI-powered flight and hotel search assistant built with FastAPI and LangGraph. This application allows users to interact with a conversational AI to search for flight and hotel packages, leveraging the Amadeus API for travel data and OpenAI for natural language processing.
+Welcome to the **Travel Agent API**, an AI-powered flight and hotel search assistant built with FastAPI and LangGraph. This application allows users to interact with a conversational AI to search for flight and hotel packages, leveraging the Amadeus API for travel data, IBM watsonx.ai as the primary LLM, and OpenAI embeddings for the visa RAG component.
 
 ## Overview
 
@@ -23,46 +23,69 @@ The application uses a stateful graph-based workflow managed by LangGraph, with 
 - **HTML Output**: Generates formatted HTML for package summaries.
 - **API Health Check**: Monitors API key availability and server status.
 - **Conversation Reset**: Allows resetting conversation history by thread ID.
+// ... existing code ...
+// Additional key functionality
+- **Visa Requirements (RAG)**: Answers visa questions using a FAISS vector store built with OpenAI embeddings and generates responses with IBM watsonx.ai.
 
 ## Directory Structure
 
 ```
 Travel-Agent-Final/
-├── Nodes/
+├── Nodes/                       # Core workflow nodes (start here for core functionalities)
 │   ├── analyze_conversation_node.py
 │   ├── create_packages.py
+│   ├── flight_inquiry_node.py
 │   ├── format_body_node.py
+│   ├── general_conversation_node.py
 │   ├── get_access_token_node.py
 │   ├── get_city_IDs_node.py
 │   ├── get_flight_offers_node.py
 │   ├── get_hotel_offers_node.py
+│   ├── invoice_extraction_node.py
 │   ├── llm_conversation_node.py
 │   ├── normalize_info_node.py
+│   ├── parse_company_hotels_node.py
 │   ├── summarize_packages.py
-│   └── toHTML.py
+│   ├── toHTML.py
+│   └── visa_rag_node.py
 ├── Models/
 │   ├── TravelSearchState.py
 │   ├── ChatRequest.py
 │   ├── ExtractedInfo.py
 │   ├── FlightResult.py
+│   ├── InvoiceModels.py
+│   ├── Message.py
 │   └── ConversationStore.py
 ├── Utils/
+│   ├── build_vector_store.py
 │   ├── decisions.py
-│   └── question_to_html.py
+│   ├── getLLM.py
+│   ├── intent_detection.py
+│   ├── invoice_to_html.py
+│   ├── question_to_html.py
+│   ├── routing.py
+│   └── watson_config.py
 ├── Prompts/
+│   ├── airport_prompt.py
+│   ├── cabin_prompt.py
+│   ├── greeterPrompt.py
+│   ├── llm_conversation.py
 │   └── summary_prompt.py
+├── data/
+│   └── visa_vector_store/       # FAISS store built with OpenAI embeddings
 ├── main.py
 ├── graph.py
 ├── .env
-├── requirements.txt
-└── README.md
+├── requirments.txt              # Note: dependency file name
+└── README.markdown
 ```
 
 ## Prerequisites
 
 - **Python 3.9+**
 - **Amadeus API Credentials**: `AMADEUS_CLIENT_ID` and `AMADEUS_CLIENT_SECRET`
-- **OpenAI API Key**: `OPENAI_API_KEY`
+- **IBM watsonx.ai Credentials**: `WATSON_APIKEY`, `PROJECT_ID`
+- **OpenAI API Key (for embeddings)**: `OPENAI_API_KEY`
 
 ## Setup
 
@@ -78,12 +101,17 @@ Travel-Agent-Final/
    ```bash
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   pip install -r requirements.txt
+   pip install -r requirments.txt
    ```
 
 3. **Configure Environment Variables**Create a `.env` file in the project root with the following:
 
    ```
+   # IBM watsonx.ai (primary LLM)
+   WATSON_APIKEY=your_watson_api_key
+   PROJECT_ID=your_watson_project_id
+
+   # OpenAI (embeddings for visa RAG)
    OPENAI_API_KEY=your_openai_api_key
    AMADEUS_CLIENT_ID=your_amadeus_client_id
    AMADEUS_CLIENT_SECRET=your_amadeus_client_secret
@@ -158,6 +186,8 @@ pytest tests/
 - Create a new file in `Nodes/` (e.g., `new_node.py`).
 - Import and add the node to `graph.py` using `graph.add_node`.
 - Update the graph edges in `create_travel_graph` to include the new node.
+ - For LLM access in nodes, import `llm` from `Utils.watson_config`.
+ - For visa search, see `Nodes/visa_rag_node.py` and `Utils/build_vector_store.py`.
 
 ### Debugging
 
@@ -167,6 +197,7 @@ pytest tests/
 ## Acknowledgments
 
 - **Amadeus API**: For travel data.
-- **OpenAI**: For LLM capabilities.
+- **IBM watsonx.ai**: Primary LLM for generation.
+- **OpenAI**: Embeddings for visa RAG and FAISS vector store.
 - **LangGraph**: For workflow management.
 - **FastAPI**: For the API framework.
