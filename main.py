@@ -577,3 +577,252 @@ Flight options: {len(flight_options)}
             <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
         </div>
         """
+# main.py - FastAPI endpoint for cheapest date search
+from fastapi.responses import HTMLResponse
+from Nodes.cheapest_date_node import create_cheapest_date_graph
+from Nodes.get_access_token_node import get_access_token_node  # Import the existing node
+import traceback
+import logging
+import os
+
+# Initialize the graph
+cheapest_date_graph = create_cheapest_date_graph().compile()
+
+@app.post("/api/cheapest-date-search", response_class=HTMLResponse)
+async def cheapest_date_search_endpoint(request: ChatRequest):
+    """
+    Handle cheapest date flight searches - takes origin, destination, date range, and nonStop preference
+    Returns HTML for frontend display
+    """
+    try:
+        # Validate required fields
+        if not request.thread_id:
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: thread_id is required</p>
+            </div>
+            """
+
+        user_message = request.user_msg.strip()
+        if not user_message:
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: user_msg cannot be empty</p>
+            </div>
+            """
+
+        # Check API keys
+        required_keys = ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "OPENAI_API_KEY"]
+        missing_keys = [key for key in required_keys if not os.getenv(key)]
+        if missing_keys:
+            return f"""
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Missing API keys: {', '.join(missing_keys)}</p>
+            </div>
+            """
+
+        # Set up initial state for cheapest date search with dedicated fields
+        state = {
+            # Thread / conversation
+            "thread_id": request.thread_id,
+            "current_message": user_message,
+            "user_message": user_message,
+
+            # Cheapest date search specific fields
+            "cheapest_date_origin": None,
+            "cheapest_date_destination": None,
+            "cheapest_date_departure_range": None,
+            "cheapest_date_normalized_range": None,
+            "cheapest_date_non_stop": None,
+            "cheapest_date_results": [],
+            "cheapest_date_error": None,
+            "cheapest_date_html": None,
+            "needs_followup": True,
+            "followup_question": None,
+
+            # Access token will be added by get_access_token_node
+            "access_token": None
+        }
+
+        print(f"DEBUG: Initial state setup complete")
+        print(f"Processing cheapest date search: {user_message}")
+
+        # First get the access token
+        state = get_access_token_node(state)
+
+        if not state.get("access_token"):
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: Could not obtain Amadeus access token. Please check your API credentials.</p>
+            </div>
+            """
+
+        print(f"DEBUG: Successfully obtained access token")
+
+        # Execute the cheapest date search graph
+        result = cheapest_date_graph.invoke(state)
+
+        print(f"DEBUG: Graph execution complete")
+        print(f"DEBUG: Final result keys: {list(result.keys())}")
+
+        # Check for cheapest dates in result
+        cheapest_dates = result.get("cheapest_date_results", [])
+        print(f"DEBUG: cheapest_dates in result: {len(cheapest_dates)} results")
+        if cheapest_dates:
+            print(f"DEBUG: First cheapest date result: {cheapest_dates[0] if cheapest_dates else 'None'}")
+
+        # Check for HTML content in various possible keys
+        html_content = None
+        possible_html_keys = ["cheapest_date_html", "html_content", "formatted_html", "result_html"]
+
+        for key in possible_html_keys:
+            if key in result and result[key]:
+                html_content = result[key]
+                print(f"DEBUG: Found HTML content in key '{key}'")
+                break
+
+        # If no HTML found in expected keys, check all string values for HTML-like content
+        if not html_content:
+            print("DEBUG: No HTML content found in expected keys, checking all string values")
+            for key, value in result.items():
+                if isinstance(value, str) and ("<div" in value or "<html" in value or "class=" in value):
+                    html_content = value
+                    print(f"DEBUG: Found HTML-like content in key '{key}': {value[:100]}...")
+                    break
+
+        # Handle specific error cases
+        if result.get("cheapest_date_error"):
+            error_msg = result["cheapest_date_error"]
+            print(f"DEBUG: Search error detected: {error_msg}")
+            html_content = f"""
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-red-700 mb-2">Cheapest Date Search Error</h3>
+                <p class="text-red-600 mb-2">We encountered an issue while searching for cheapest dates:</p>
+                <p class="text-sm text-red-500 bg-red-100 p-2 rounded">{error_msg}</p>
+                <p class="text-sm text-gray-600 mt-2">Please try again later or contact support if the problem persists.</p>
+            </div>
+            """
+
+        # Handle case where we have cheapest dates but no HTML was generated
+        elif cheapest_dates and not html_content:
+            print(f"DEBUG: Found {len(cheapest_dates)} cheapest dates but no HTML generated, creating manual HTML")
+
+            dates_html = ""
+            for i, date_option in enumerate(cheapest_dates[:10]):  # Show first 10 dates
+                dates_html += f"""
+                <div class="bg-white border rounded-lg p-4 mb-3 shadow-sm">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex-1">
+                            <span class="font-medium text-lg">{date_option.get('departure_date', 'N/A')}</span>
+                            <span class="text-sm text-gray-600 ml-2">({date_option.get('return_date', 'One way')})</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-xl font-bold text-green-600">{date_option.get('price', {}).get('total', 'N/A')} {date_option.get('price', {}).get('currency', 'EUR')}</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <span class="font-medium">From:</span> {date_option.get('origin', 'N/A')}
+                            <br>
+                            <span class="font-medium">To:</span> {date_option.get('destination', 'N/A')}
+                        </div>
+                        <div>
+                            <span class="font-medium">Non-stop:</span> {'Yes' if result.get('cheapest_date_non_stop') else 'No'}
+                            <br>
+                            <span class="font-medium">Trip Type:</span> Round Trip
+                        </div>
+                    </div>
+                </div>
+                """
+
+            html_content = f"""
+            <div class="p-6 bg-white border rounded-lg shadow-sm">
+                <h3 class="text-xl font-semibold text-gray-800 mb-4">Cheapest Flight Dates</h3>
+                <div class="mb-4 p-3 bg-blue-50 rounded">
+                    <div class="grid grid-cols-3 gap-4 text-sm">
+                        <div><span class="font-medium">From:</span> {result.get('cheapest_date_origin', 'N/A')}</div>
+                        <div><span class="font-medium">To:</span> {result.get('cheapest_date_destination', 'N/A')}</div>
+                        <div><span class="font-medium">Date Range:</span> {result.get('cheapest_date_departure_range', 'N/A')}</div>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    {dates_html}
+                </div>
+                {f'<p class="text-sm text-gray-600 mt-4">Showing {min(10, len(cheapest_dates))} of {len(cheapest_dates)} available dates</p>' if len(cheapest_dates) > 10 else ''}
+            </div>
+            """
+
+        # Handle case where extraction was successful but no dates found
+        elif result.get("cheapest_date_origin") and result.get("cheapest_date_destination") and result.get("cheapest_date_departure_range"):
+            origin = result["cheapest_date_origin"]
+            destination = result["cheapest_date_destination"]
+            date_range = result["cheapest_date_departure_range"]
+
+            if not html_content:
+                html_content = f"""
+                <div class="p-6 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h3 class="text-lg font-semibold text-blue-700 mb-3">Cheapest Date Search Summary</h3>
+                    <div class="space-y-2 mb-4">
+                        <p><span class="font-medium">From:</span> {origin}</p>
+                        <p><span class="font-medium">To:</span> {destination}</p>
+                        <p><span class="font-medium">Date Range:</span> {date_range}</p>
+                        <p><span class="font-medium">Non-stop preference:</span> {'Required' if result.get('cheapest_date_non_stop') else 'Flexible'}</p>
+                    </div>
+                    <div class="bg-yellow-100 border border-yellow-300 rounded p-3">
+                        <p class="text-yellow-700">No cheapest dates found or search service temporarily unavailable.</p>
+                        <p class="text-sm text-yellow-600 mt-1">Please try again later or modify your search criteria.</p>
+                        <details class="mt-2">
+                            <summary class="text-xs cursor-pointer">Debug Info</summary>
+                            <pre class="text-xs mt-1 bg-yellow-50 p-2 rounded overflow-auto">
+Cheapest dates count: {len(cheapest_dates)}
+Available result keys: {', '.join(result.keys())}
+                            </pre>
+                        </details>
+                    </div>
+                </div>
+                """
+
+        # Handle case where followup is needed
+        elif result.get("needs_followup") and result.get("followup_question"):
+            question = result["followup_question"]
+            html_content = f"""
+            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-blue-700 mb-2">More Information Needed</h3>
+                <p class="text-blue-600">{question}</p>
+            </div>
+            """
+
+        # Final fallback
+        if not html_content:
+            print("DEBUG: No HTML content generated, using fallback")
+            html_content = f"""
+            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h3 class="text-lg font-semibold text-yellow-700 mb-2">Processing Cheapest Date Search</h3>
+                <p class="text-yellow-600 mb-2">Your request: "{user_message}"</p>
+                <p class="text-sm text-gray-600">The system processed your request but couldn't generate the display.</p>
+                <details class="mt-3">
+                    <summary class="text-xs text-gray-500 cursor-pointer">Debug Info</summary>
+                    <pre class="text-xs text-gray-400 mt-1 bg-gray-100 p-2 rounded overflow-auto">
+Available keys: {', '.join(result.keys())}
+Cheapest dates: {len(cheapest_dates)}
+                    </pre>
+                </details>
+            </div>
+            """
+
+        print(f"DEBUG: Returning HTML content of length: {len(html_content)}")
+        return html_content
+    except Exception as e:
+        print(f"Error in cheapest date search endpoint: {e}")
+        traceback.print_exc()
+        return f"""
+        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
+            <p class="text-red-600 mb-2">An unexpected error occurred while processing your cheapest date search.</p>
+            <details class="mt-2">
+                <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
+                <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>
+            </details>
+            <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
+        </div>
+        """

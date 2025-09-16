@@ -120,7 +120,7 @@ Travel-Agent-Final/
 4. **Run the Application**Start the FastAPI server:
 
    ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   uvicorn main:app --reload
    ```
 
 ## Usage

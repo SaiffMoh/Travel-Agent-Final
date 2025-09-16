@@ -87,3 +87,14 @@ class TravelSearchState(TypedDict, total=False):
     # Visa info
     visa_info_html: Optional[str]
     flight_options: Optional[str]
+
+
+    # Cheapest date search specific fields (NEW)
+    cheapest_date_origin: Optional[str]
+    cheapest_date_destination: Optional[str]
+    cheapest_date_departure_range: Optional[str]
+    cheapest_date_normalized_range: Optional[str]
+    cheapest_date_non_stop: Optional[bool]
+    cheapest_date_results: List[Dict[str, Any]]
+    cheapest_date_error: Optional[str]
+    cheapest_date_html: Optional[str]
