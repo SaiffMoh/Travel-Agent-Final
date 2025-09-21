@@ -23,3 +23,5 @@ langchain-community==0.3.29
 arabic-reshaper==3.0.0
 langdetect==1.0.9
 amadeus==12.0.0
+sentence-transformers==5.1.0
+rank-bm25==0.2.2

@@ -1,0 +1,548 @@
+{
+  "albania": {
+    "display_name": "Albania",
+    "store_path": "data\\visa_vector_stores\\albania",
+    "pdf_source": "data\\visa_pdfs\\Albania.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "algeria": {
+    "display_name": "Algeria",
+    "store_path": "data\\visa_vector_stores\\algeria",
+    "pdf_source": "data\\visa_pdfs\\Algeria.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "angola": {
+    "display_name": "Angola",
+    "store_path": "data\\visa_vector_stores\\angola",
+    "pdf_source": "data\\visa_pdfs\\Angola.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "argentina": {
+    "display_name": "Argentina",
+    "store_path": "data\\visa_vector_stores\\argentina",
+    "pdf_source": "data\\visa_pdfs\\Argentina.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "austria": {
+    "display_name": "Austria",
+    "store_path": "data\\visa_vector_stores\\austria",
+    "pdf_source": "data\\visa_pdfs\\Austria.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "bahrain": {
+    "display_name": "Bahrain",
+    "store_path": "data\\visa_vector_stores\\bahrain",
+    "pdf_source": "data\\visa_pdfs\\Bahrain.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "bangladesh": {
+    "display_name": "Bangladesh",
+    "store_path": "data\\visa_vector_stores\\bangladesh",
+    "pdf_source": "data\\visa_pdfs\\Bangladesh.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "belgium": {
+    "display_name": "Belgium",
+    "store_path": "data\\visa_vector_stores\\belgium",
+    "pdf_source": "data\\visa_pdfs\\Belgium.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "botswana": {
+    "display_name": "Botswana",
+    "store_path": "data\\visa_vector_stores\\botswana",
+    "pdf_source": "data\\visa_pdfs\\Botswana.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "brazil": {
+    "display_name": "Brazil",
+    "store_path": "data\\visa_vector_stores\\brazil",
+    "pdf_source": "data\\visa_pdfs\\Brazil.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "burkina_faso": {
+    "display_name": "Burkina Faso",
+    "store_path": "data\\visa_vector_stores\\burkina_faso",
+    "pdf_source": "data\\visa_pdfs\\Burkina Faso.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "burundi": {
+    "display_name": "Burundi",
+    "store_path": "data\\visa_vector_stores\\burundi",
+    "pdf_source": "data\\visa_pdfs\\Burundi.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "cameroon": {
+    "display_name": "Cameroon",
+    "store_path": "data\\visa_vector_stores\\cameroon",
+    "pdf_source": "data\\visa_pdfs\\Cameroon.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "chad": {
+    "display_name": "Chad",
+    "store_path": "data\\visa_vector_stores\\chad",
+    "pdf_source": "data\\visa_pdfs\\Chad.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "colombia": {
+    "display_name": "Colombia",
+    "store_path": "data\\visa_vector_stores\\colombia",
+    "pdf_source": "data\\visa_pdfs\\Colombia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "comoros": {
+    "display_name": "Comoros",
+    "store_path": "data\\visa_vector_stores\\comoros",
+    "pdf_source": "data\\visa_pdfs\\Comoros.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "coted_lvoir": {
+    "display_name": "Coted Lvoir",
+    "store_path": "data\\visa_vector_stores\\coted_lvoir",
+    "pdf_source": "data\\visa_pdfs\\coted lvoir.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "croatia": {
+    "display_name": "Croatia",
+    "store_path": "data\\visa_vector_stores\\croatia",
+    "pdf_source": "data\\visa_pdfs\\Croatia.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "democratic_republic_of_the_congo": {
+    "display_name": "Democratic Republic Of The Congo",
+    "store_path": "data\\visa_vector_stores\\democratic_republic_of_the_congo",
+    "pdf_source": "data\\visa_pdfs\\Democratic Republic of the Congo.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "denmark": {
+    "display_name": "Denmark",
+    "store_path": "data\\visa_vector_stores\\denmark",
+    "pdf_source": "data\\visa_pdfs\\Denmark.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "equatorial_guinea": {
+    "display_name": "Equatorial Guinea",
+    "store_path": "data\\visa_vector_stores\\equatorial_guinea",
+    "pdf_source": "data\\visa_pdfs\\Equatorial Guinea.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "ethiopia": {
+    "display_name": "Ethiopia",
+    "store_path": "data\\visa_vector_stores\\ethiopia",
+    "pdf_source": "data\\visa_pdfs\\Ethiopia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "france": {
+    "display_name": "France",
+    "store_path": "data\\visa_vector_stores\\france",
+    "pdf_source": "data\\visa_pdfs\\france.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "gabon": {
+    "display_name": "Gabon",
+    "store_path": "data\\visa_vector_stores\\gabon",
+    "pdf_source": "data\\visa_pdfs\\Gabon.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "ghana": {
+    "display_name": "Ghana",
+    "store_path": "data\\visa_vector_stores\\ghana",
+    "pdf_source": "data\\visa_pdfs\\Ghana.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "greece": {
+    "display_name": "Greece",
+    "store_path": "data\\visa_vector_stores\\greece",
+    "pdf_source": "data\\visa_pdfs\\Greece.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "guinea_conakry": {
+    "display_name": "Guinea Conakry",
+    "store_path": "data\\visa_vector_stores\\guinea_conakry",
+    "pdf_source": "data\\visa_pdfs\\Guinea Conakry.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "hungary": {
+    "display_name": "Hungary",
+    "store_path": "data\\visa_vector_stores\\hungary",
+    "pdf_source": "data\\visa_pdfs\\HUNGARY.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "india": {
+    "display_name": "India",
+    "store_path": "data\\visa_vector_stores\\india",
+    "pdf_source": "data\\visa_pdfs\\India.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "indonesia": {
+    "display_name": "Indonesia",
+    "store_path": "data\\visa_vector_stores\\indonesia",
+    "pdf_source": "data\\visa_pdfs\\Indonesia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "iraq": {
+    "display_name": "Iraq",
+    "store_path": "data\\visa_vector_stores\\iraq",
+    "pdf_source": "data\\visa_pdfs\\Iraq.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "jordan": {
+    "display_name": "Jordan",
+    "store_path": "data\\visa_vector_stores\\jordan",
+    "pdf_source": "data\\visa_pdfs\\Jordan.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "kenya": {
+    "display_name": "Kenya",
+    "store_path": "data\\visa_vector_stores\\kenya",
+    "pdf_source": "data\\visa_pdfs\\Kenya.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "kuwait": {
+    "display_name": "Kuwait",
+    "store_path": "data\\visa_vector_stores\\kuwait",
+    "pdf_source": "data\\visa_pdfs\\Kuwait.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "latvia": {
+    "display_name": "Latvia",
+    "store_path": "data\\visa_vector_stores\\latvia",
+    "pdf_source": "data\\visa_pdfs\\Latvia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "lebanon": {
+    "display_name": "Lebanon",
+    "store_path": "data\\visa_vector_stores\\lebanon",
+    "pdf_source": "data\\visa_pdfs\\Lebanon.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "liberia": {
+    "display_name": "Liberia",
+    "store_path": "data\\visa_vector_stores\\liberia",
+    "pdf_source": "data\\visa_pdfs\\Liberia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "lithuania": {
+    "display_name": "Lithuania",
+    "store_path": "data\\visa_vector_stores\\lithuania",
+    "pdf_source": "data\\visa_pdfs\\Lithuania.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "luxembarg": {
+    "display_name": "Luxembarg",
+    "store_path": "data\\visa_vector_stores\\luxembarg",
+    "pdf_source": "data\\visa_pdfs\\Luxembarg.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "madagascar": {
+    "display_name": "Madagascar",
+    "store_path": "data\\visa_vector_stores\\madagascar",
+    "pdf_source": "data\\visa_pdfs\\Madagascar.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "malawi": {
+    "display_name": "Malawi",
+    "store_path": "data\\visa_vector_stores\\malawi",
+    "pdf_source": "data\\visa_pdfs\\Malawi.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "mali": {
+    "display_name": "Mali",
+    "store_path": "data\\visa_vector_stores\\mali",
+    "pdf_source": "data\\visa_pdfs\\Mali.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "mauritius": {
+    "display_name": "Mauritius",
+    "store_path": "data\\visa_vector_stores\\mauritius",
+    "pdf_source": "data\\visa_pdfs\\Mauritius.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "mexico": {
+    "display_name": "Mexico",
+    "store_path": "data\\visa_vector_stores\\mexico",
+    "pdf_source": "data\\visa_pdfs\\Mexico.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "moldova": {
+    "display_name": "Moldova",
+    "store_path": "data\\visa_vector_stores\\moldova",
+    "pdf_source": "data\\visa_pdfs\\Moldova.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "morocco": {
+    "display_name": "Morocco",
+    "store_path": "data\\visa_vector_stores\\morocco",
+    "pdf_source": "data\\visa_pdfs\\Morocco.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "mozambique": {
+    "display_name": "Mozambique",
+    "store_path": "data\\visa_vector_stores\\mozambique",
+    "pdf_source": "data\\visa_pdfs\\Mozambique.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "myanamar": {
+    "display_name": "Myanamar",
+    "store_path": "data\\visa_vector_stores\\myanamar",
+    "pdf_source": "data\\visa_pdfs\\Myanamar.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "netherlands": {
+    "display_name": "Netherlands",
+    "store_path": "data\\visa_vector_stores\\netherlands",
+    "pdf_source": "data\\visa_pdfs\\Netherlands.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "niger": {
+    "display_name": "Niger",
+    "store_path": "data\\visa_vector_stores\\niger",
+    "pdf_source": "data\\visa_pdfs\\Niger.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "nigeria": {
+    "display_name": "Nigeria",
+    "store_path": "data\\visa_vector_stores\\nigeria",
+    "pdf_source": "data\\visa_pdfs\\Nigeria.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "oman": {
+    "display_name": "Oman",
+    "store_path": "data\\visa_vector_stores\\oman",
+    "pdf_source": "data\\visa_pdfs\\oman.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "pakistan": {
+    "display_name": "Pakistan",
+    "store_path": "data\\visa_vector_stores\\pakistan",
+    "pdf_source": "data\\visa_pdfs\\Pakistan.pdf",
+    "chunk_count": 2,
+    "page_count": 2
+  },
+  "poland": {
+    "display_name": "Poland",
+    "store_path": "data\\visa_vector_stores\\poland",
+    "pdf_source": "data\\visa_pdfs\\Poland.pdf",
+    "chunk_count": 3,
+    "page_count": 1
+  },
+  "portugal": {
+    "display_name": "Portugal",
+    "store_path": "data\\visa_vector_stores\\portugal",
+    "pdf_source": "data\\visa_pdfs\\Portugal.pdf",
+    "chunk_count": 2,
+    "page_count": 1
+  },
+  "romania": {
+    "display_name": "Romania",
+    "store_path": "data\\visa_vector_stores\\romania",
+    "pdf_source": "data\\visa_pdfs\\Romania.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "saudi_arabia": {
+    "display_name": "Saudi Arabia",
+    "store_path": "data\\visa_vector_stores\\saudi_arabia",
+    "pdf_source": "data\\visa_pdfs\\Saudi Arabia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "senegal": {
+    "display_name": "Senegal",
+    "store_path": "data\\visa_vector_stores\\senegal",
+    "pdf_source": "data\\visa_pdfs\\Senegal.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "sierra_leone": {
+    "display_name": "Sierra Leone",
+    "store_path": "data\\visa_vector_stores\\sierra_leone",
+    "pdf_source": "data\\visa_pdfs\\Sierra Leone.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "slovenia": {
+    "display_name": "Slovenia",
+    "store_path": "data\\visa_vector_stores\\slovenia",
+    "pdf_source": "data\\visa_pdfs\\Slovenia.pdf",
+    "chunk_count": 2,
+    "page_count": 2
+  },
+  "south_africa": {
+    "display_name": "South Africa",
+    "store_path": "data\\visa_vector_stores\\south_africa",
+    "pdf_source": "data\\visa_pdfs\\South Africa.pdf",
+    "chunk_count": 2,
+    "page_count": 2
+  },
+  "south_korea": {
+    "display_name": "South Korea",
+    "store_path": "data\\visa_vector_stores\\south_korea",
+    "pdf_source": "data\\visa_pdfs\\South Korea.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "south_sudan": {
+    "display_name": "South Sudan",
+    "store_path": "data\\visa_vector_stores\\south_sudan",
+    "pdf_source": "data\\visa_pdfs\\South Sudan.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "spain": {
+    "display_name": "Spain",
+    "store_path": "data\\visa_vector_stores\\spain",
+    "pdf_source": "data\\visa_pdfs\\Spain.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "sudan": {
+    "display_name": "Sudan",
+    "store_path": "data\\visa_vector_stores\\sudan",
+    "pdf_source": "data\\visa_pdfs\\Sudan.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "switzerland": {
+    "display_name": "Switzerland",
+    "store_path": "data\\visa_vector_stores\\switzerland",
+    "pdf_source": "data\\visa_pdfs\\Switzerland.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "tanzania": {
+    "display_name": "Tanzania",
+    "store_path": "data\\visa_vector_stores\\tanzania",
+    "pdf_source": "data\\visa_pdfs\\Tanzania.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "tchad": {
+    "display_name": "Tchad",
+    "store_path": "data\\visa_vector_stores\\tchad",
+    "pdf_source": "data\\visa_pdfs\\tchad.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "togo": {
+    "display_name": "Togo",
+    "store_path": "data\\visa_vector_stores\\togo",
+    "pdf_source": "data\\visa_pdfs\\TOGO.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "tunisia": {
+    "display_name": "Tunisia",
+    "store_path": "data\\visa_vector_stores\\tunisia",
+    "pdf_source": "data\\visa_pdfs\\Tunisia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "turkey": {
+    "display_name": "Turkey",
+    "store_path": "data\\visa_vector_stores\\turkey",
+    "pdf_source": "data\\visa_pdfs\\Turkey.pdf",
+    "chunk_count": 2,
+    "page_count": 2
+  },
+  "uganda": {
+    "display_name": "Uganda",
+    "store_path": "data\\visa_vector_stores\\uganda",
+    "pdf_source": "data\\visa_pdfs\\uganda.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "united_arab_emirates": {
+    "display_name": "United Arab Emirates",
+    "store_path": "data\\visa_vector_stores\\united_arab_emirates",
+    "pdf_source": "data\\visa_pdfs\\United Arab Emirates.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "united_kingdom": {
+    "display_name": "United Kingdom",
+    "store_path": "data\\visa_vector_stores\\united_kingdom",
+    "pdf_source": "data\\visa_pdfs\\United Kingdom.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "united_state_of_america": {
+    "display_name": "United State Of America",
+    "store_path": "data\\visa_vector_stores\\united_state_of_america",
+    "pdf_source": "data\\visa_pdfs\\United State of America.pdf",
+    "chunk_count": 2,
+    "page_count": 2
+  },
+  "uruguay": {
+    "display_name": "Uruguay",
+    "store_path": "data\\visa_vector_stores\\uruguay",
+    "pdf_source": "data\\visa_pdfs\\Uruguay.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "yemen": {
+    "display_name": "Yemen",
+    "store_path": "data\\visa_vector_stores\\yemen",
+    "pdf_source": "data\\visa_pdfs\\Yemen.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  },
+  "zambia": {
+    "display_name": "Zambia",
+    "store_path": "data\\visa_vector_stores\\zambia",
+    "pdf_source": "data\\visa_pdfs\\zambia.pdf",
+    "chunk_count": 1,
+    "page_count": 1
+  }
+}

@@ -1,8 +1,8 @@
 from Models.TravelSearchState import TravelSearchState
 from Utils.state_reset import reset_travel_state_for_new_search
 from Utils.intent_detection import detect_user_intent
-from Nodes.visa_rag_node import get_country
-from Utils.watson_config import llm  # Import Watson LLM instead of OpenAI
+from Nodes.visa_rag_node import enhanced_get_country  # Updated import
+from Utils.watson_config import llm
 import os
 
 def should_proceed_to_search(state: TravelSearchState) -> str:
@@ -56,14 +56,17 @@ def smart_router(state: TravelSearchState) -> str:
         user_message = state.get("current_message") or state.get("user_message", "")
         destination = state.get("destination")
         
-        # Fixed: Remove the llm parameter since get_country only takes 2 arguments
-        country = get_country(user_message, destination)
+        # Updated: Using enhanced_get_country function with proper parameters
+        country = enhanced_get_country(user_message, destination)
         if country:
             print(f"Router: Visa inquiry for country - {country}")
+            # Store detected country in state for the visa RAG node
+            state["detected_visa_country"] = country
             return "visa_rag"
         else:
-            print("Router: Visa inquiry without clear country - defaulting to general conversation")
-            return "general_conversation"
+            print("Router: Visa inquiry without clear country - routing to visa_rag for country selection")
+            # Still route to visa_rag so it can provide the available countries list
+            return "visa_rag"
     else:
         if state.get("needs_followup") and state.get("followup_question"):
             print(f"Router: General conversation with followup - {state.get('followup_question')}")
