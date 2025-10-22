@@ -1,5 +1,5 @@
 from Models.TravelSearchState import TravelSearchState
-from Utils.watson_config import llm  # Import Watsonx LLM client
+from Utils.watson_config import llm, llm_generic # Import Watsonx LLM client
 from Prompts.summary_prompt import summary_prompt
 import json
 import logging
@@ -27,7 +27,7 @@ def summarize_packages(state: TravelSearchState) -> TravelSearchState:
         llm_prompt = summary_prompt(package1, package2, package3, package4, package5, package6, package7)
         prompt = f"<|SYSTEM|>{llm_prompt}<|USER|>Return the response as plain text, with no markdown or emojis.<|END|>"
         logger.info(f"Watsonx summary prompt: {prompt[:500]}...")
-        response = llm.generate(prompt=prompt)
+        response = llm_generic.generate(prompt=prompt)
         state["package_summary"] = response["results"][0]["generated_text"].strip()
         logger.info(f"Watsonx summary response: {state['package_summary']}")
     except Exception as e:
