@@ -7,6 +7,7 @@ from typing import List
 import traceback
 import logging
 from Utils.question_to_html import question_to_html
+from Utils.passport_decoder import generate_passport_html, process_passport_file
 from graph import create_travel_graph
 from Models.ChatRequest import ChatRequest
 from Models.ExtractedInfo import ExtractedInfo
@@ -48,9 +49,11 @@ DATA_DIR = Path("data")
 UPLOAD_DIR = DATA_DIR / "uploads"
 PDF_DIR = UPLOAD_DIR / "pdfs"
 JSON_DIR = UPLOAD_DIR / "json_outputs"
+PASSPORT_DIR = UPLOAD_DIR / "passports"
+
 
 # Create directories if they don't exist
-for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR]:
+for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 graph = create_travel_graph().compile()
@@ -819,6 +822,115 @@ Cheapest dates: {len(cheapest_dates)}
         <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
             <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
             <p class="text-red-600 mb-2">An unexpected error occurred while processing your cheapest date search.</p>
+            <details class="mt-2">
+                <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
+                <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>
+            </details>
+            <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
+        </div>
+        """
+    
+# Add this endpoint after your existing endpoints
+@app.post("/api/passports/upload", response_class=HTMLResponse)
+async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
+    """
+    Handle multiple passport uploads (PDF or image files) and return HTML with extracted information.
+    Uploaded files are saved to PASSPORT_DIR and not deleted so they remain available on disk.
+    """
+    try:
+        # Validate thread_id similar to other endpoints
+        if not thread_id:
+            return """
+            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600">Error: thread_id is required</p>
+            </div>
+            """
+
+        if not files:
+            return """
+            <div class="p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p class="text-yellow-700 text-center">No passports uploaded</p>
+            </div>
+            """
+
+        # Record upload action in conversation store
+        conversation_store.add_message(thread_id, "user", f"Uploaded {len(files)} passport file(s)")
+
+        passports_data = []
+        saved_paths = []
+
+        for file in files:
+            temp_file_path = None
+            try:
+                # Validate file extension
+                extension = file.filename.lower().split('.')[-1]
+                if extension not in ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']:
+                    passports_data.append({
+                        "error": f"Unsupported file format: {extension}",
+                        "filename": file.filename
+                    })
+                    continue
+
+                # Create permanent file in PASSPORT_DIR (do not delete)
+                filename = f"{uuid.uuid4()}_{file.filename}"
+                temp_file_path = PASSPORT_DIR / filename
+
+                # Save uploaded file
+                with open(temp_file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+
+                logging.info(f"Saved passport file: {temp_file_path}")
+                saved_paths.append(str(temp_file_path))
+
+                # Process the passport file
+                passport_info = process_passport_file(str(temp_file_path))
+
+                # Add filename and saved path to the result
+                passport_info["filename"] = file.filename
+                passport_info["saved_path"] = str(temp_file_path)
+                passports_data.append(passport_info)
+
+                if "error" not in passport_info:
+                    logging.info(f"Successfully extracted passport info from {file.filename}")
+                else:
+                    logging.warning(f"Failed to extract passport info from {file.filename}: {passport_info['error']}")
+
+            except Exception as e:
+                logging.error(f"Exception processing passport {file.filename}: {e}")
+                traceback.print_exc()
+                passports_data.append({
+                    "error": f"Processing error: {str(e)}",
+                    "filename": file.filename
+                })
+            finally:
+                # Do NOT remove saved passport files. Keep them on disk per request.
+                pass
+
+        # Generate HTML from all passport data
+        html_content = generate_passport_html(passports_data)
+
+        # Save state to conversation store so frontend can reference later
+        state_to_save = {
+            "passports_uploaded": True,
+            "passports_data": passports_data,
+            "passport_html": html_content,
+            "passport_file_paths": saved_paths
+        }
+        conversation_store.save_state(thread_id, state_to_save)
+
+        # Add assistant message summarizing result
+        summary_msg = "Passport data extracted" if any("error" not in p for p in passports_data) else "Passport extraction completed with errors"
+        conversation_store.add_message(thread_id, "assistant", summary_msg)
+
+        return html_content
+
+    except Exception as e:
+        logging.error(f"Unexpected error in passports upload endpoint: {e}")
+        traceback.print_exc()
+        return f"""
+        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
+            <p class="text-red-600 mb-2">An unexpected error occurred while processing your passport upload.</p>
             <details class="mt-2">
                 <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
                 <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>

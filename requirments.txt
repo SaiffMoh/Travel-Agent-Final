@@ -25,3 +25,9 @@ langdetect==1.0.9
 amadeus==12.0.0
 sentence-transformers==5.1.0
 rank-bm25==0.2.2
+
+# Passport extraction dependencies
+zxing-cpp>=2.0.0
+opencv-python>=4.8.0
+PyMuPDF>=1.23.0
+numpy>=1.24.0
