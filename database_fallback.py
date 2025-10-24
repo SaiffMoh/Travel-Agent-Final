@@ -1,13 +1,12 @@
 """
-Database Fallback Service
-Retrieves flight and hotel data from local SQLite database when Amadeus API fails
+Database Fallback Service - FIXED VERSION
+Only returns exact matches, no "closest date" fallback
 """
 
 import sqlite3
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-import random
 
 
 class DatabaseFallbackService:
@@ -25,7 +24,7 @@ class DatabaseFallbackService:
                          cabin_class: str = "ECONOMY",
                          duration: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Get flight offers from database
+        Get flight offers from database - EXACT MATCHES ONLY
         
         Returns list of flight offers for 7 consecutive days starting from departure_date
         """
@@ -42,7 +41,7 @@ class DatabaseFallbackService:
             for day_offset in range(7):
                 search_date = (dep_date + timedelta(days=day_offset)).strftime("%Y-%m-%d")
                 
-                # Try exact match first
+                # ONLY try exact match - no closest date fallback
                 cursor.execute("""
                     SELECT offer_data, duration, search_date
                     FROM flight_offers
@@ -56,22 +55,6 @@ class DatabaseFallbackService:
                 """, (origin, destination, search_date, cabin_class, duration, duration))
                 
                 results = cursor.fetchall()
-                
-                # If no exact date match, find closest date
-                if not results:
-                    cursor.execute("""
-                        SELECT offer_data, duration, search_date,
-                               ABS(julianday(departure_date) - julianday(?)) as date_diff
-                        FROM flight_offers
-                        WHERE origin = ?
-                        AND destination = ?
-                        AND cabin_class = ?
-                        AND (? IS NULL OR duration = ?)
-                        ORDER BY date_diff ASC, created_at DESC
-                        LIMIT 5
-                    """, (search_date, origin, destination, cabin_class, duration, duration))
-                    
-                    results = cursor.fetchall()
                 
                 # Process results for this day
                 day_flights = []
@@ -90,7 +73,7 @@ class DatabaseFallbackService:
             if all_flights:
                 print(f"✓ Database: Found {len(all_flights)} cached flights for {origin}→{destination}")
             else:
-                print(f"✗ Database: No flights found for {origin}→{destination}")
+                print(f"✗ Database: No flights found for {origin}→{destination} on {departure_date}")
             
             return all_flights
             
@@ -131,12 +114,12 @@ class DatabaseFallbackService:
                         city_code: str,
                         checkin_date: str,
                         checkout_date: str) -> List[Dict[str, Any]]:
-        """Get hotel offers from database"""
+        """Get hotel offers from database - EXACT MATCHES ONLY"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            # Try exact match first
+            # ONLY try exact match - no closest date fallback
             cursor.execute("""
                 SELECT hotel_data
                 FROM hotel_offers
@@ -149,20 +132,6 @@ class DatabaseFallbackService:
             
             result = cursor.fetchone()
             
-            # If no exact match, find closest dates
-            if not result:
-                cursor.execute("""
-                    SELECT hotel_data,
-                           ABS(julianday(checkin_date) - julianday(?)) as checkin_diff,
-                           ABS(julianday(checkout_date) - julianday(?)) as checkout_diff
-                    FROM hotel_offers
-                    WHERE city_code = ?
-                    ORDER BY (checkin_diff + checkout_diff) ASC, created_at DESC
-                    LIMIT 1
-                """, (checkin_date, checkout_date, city_code))
-                
-                result = cursor.fetchone()
-            
             conn.close()
             
             if result:
@@ -173,7 +142,7 @@ class DatabaseFallbackService:
                 print(f"✓ Database: Found {len(hotels)} cached hotels for {city_code}")
                 return hotels
             else:
-                print(f"✗ Database: No hotels found for {city_code}")
+                print(f"✗ Database: No hotels found for {city_code} on {checkin_date}")
                 return []
                 
         except Exception as e:
@@ -260,167 +229,3 @@ class DatabaseFallbackService:
             print(f"✗ Database error getting stats: {e}")
             conn.close()
             return {}
-
-
-# Fallback data generator for completely missing data
-class FallbackDataGenerator:
-    """Generate realistic dummy data when database has no matches"""
-    
-    @staticmethod
-    def generate_flight_offer(origin: str, destination: str, departure_date: str, 
-                             cabin: str = "ECONOMY", duration: int = 5) -> Dict[str, Any]:
-        """Generate a realistic flight offer"""
-        
-        dep_datetime = datetime.strptime(departure_date, "%Y-%m-%d")
-        ret_datetime = dep_datetime + timedelta(days=duration)
-        
-        # Random flight times
-        dep_time = f"{random.randint(6, 22):02d}:{random.choice(['00', '15', '30', '45'])}:00"
-        arr_time = f"{random.randint(6, 22):02d}:{random.choice(['00', '15', '30', '45'])}:00"
-        
-        # Price ranges based on cabin
-        price_ranges = {
-            "ECONOMY": (8000, 15000),
-            "PREMIUM_ECONOMY": (15000, 25000),
-            "BUSINESS": (25000, 45000),
-            "FIRST": (45000, 80000)
-        }
-        
-        base_price = random.randint(*price_ranges.get(cabin, (8000, 15000)))
-        
-        return {
-            "type": "flight-offer",
-            "id": f"FALLBACK_{random.randint(1000, 9999)}",
-            "source": "GDS",
-            "instantTicketingRequired": False,
-            "nonHomogeneous": False,
-            "oneWay": False,
-            "lastTicketingDate": (dep_datetime - timedelta(days=3)).strftime("%Y-%m-%d"),
-            "numberOfBookableSeats": random.randint(1, 9),
-            "itineraries": [
-                {
-                    "duration": f"PT{random.randint(3, 8)}H{random.randint(0, 59)}M",
-                    "segments": [
-                        {
-                            "departure": {
-                                "iataCode": origin,
-                                "at": f"{departure_date}T{dep_time}"
-                            },
-                            "arrival": {
-                                "iataCode": destination,
-                                "at": f"{departure_date}T{arr_time}"
-                            },
-                            "carrierCode": random.choice(["MS", "LH", "AF", "BA"]),
-                            "number": str(random.randint(100, 999)),
-                            "aircraft": {"code": random.choice(["320", "321", "738", "789"])},
-                            "operating": {"carrierCode": random.choice(["MS", "LH", "AF", "BA"])},
-                            "duration": f"PT{random.randint(3, 8)}H{random.randint(0, 59)}M",
-                            "id": "1",
-                            "numberOfStops": 0
-                        }
-                    ]
-                },
-                {
-                    "duration": f"PT{random.randint(3, 8)}H{random.randint(0, 59)}M",
-                    "segments": [
-                        {
-                            "departure": {
-                                "iataCode": destination,
-                                "at": f"{ret_datetime.strftime('%Y-%m-%d')}T{dep_time}"
-                            },
-                            "arrival": {
-                                "iataCode": origin,
-                                "at": f"{ret_datetime.strftime('%Y-%m-%d')}T{arr_time}"
-                            },
-                            "carrierCode": random.choice(["MS", "LH", "AF", "BA"]),
-                            "number": str(random.randint(100, 999)),
-                            "aircraft": {"code": random.choice(["320", "321", "738", "789"])},
-                            "operating": {"carrierCode": random.choice(["MS", "LH", "AF", "BA"])},
-                            "duration": f"PT{random.randint(3, 8)}H{random.randint(0, 59)}M",
-                            "id": "2",
-                            "numberOfStops": 0
-                        }
-                    ]
-                }
-            ],
-            "price": {
-                "currency": "EGP",
-                "total": str(base_price),
-                "base": str(base_price * 0.85),
-                "fees": [{"amount": str(base_price * 0.15), "type": "SUPPLIER"}],
-                "grandTotal": str(base_price)
-            },
-            "pricingOptions": {
-                "fareType": ["PUBLISHED"],
-                "includedCheckedBagsOnly": True
-            },
-            "validatingAirlineCodes": [random.choice(["MS", "LH", "AF", "BA"])],
-            "travelerPricings": [
-                {
-                    "travelerId": "1",
-                    "fareOption": "STANDARD",
-                    "travelerType": "ADULT",
-                    "price": {
-                        "currency": "EGP",
-                        "total": str(base_price),
-                        "base": str(base_price * 0.85)
-                    }
-                }
-            ],
-            "_from_database": True,
-            "_is_generated": True
-        }
-    
-    @staticmethod
-    def generate_hotel_offer(hotel_name: str, checkin: str, checkout: str) -> Dict[str, Any]:
-        """Generate a realistic hotel offer"""
-        
-        checkin_dt = datetime.strptime(checkin, "%Y-%m-%d")
-        checkout_dt = datetime.strptime(checkout, "%Y-%m-%d")
-        nights = (checkout_dt - checkin_dt).days
-        
-        rate_per_night = random.randint(800, 3000)
-        total_price = rate_per_night * nights
-        
-        return {
-            "type": "hotel-offers",
-            "hotel": {
-                "name": hotel_name,
-                "hotelId": f"FALLBACK{random.randint(10000, 99999)}",
-                "chainCode": random.choice(["HI", "RT", "MC", "AC"]),
-                "rating": str(random.randint(3, 5))
-            },
-            "available": True,
-            "offers": [
-                {
-                    "id": f"OFFER_{random.randint(1000, 9999)}",
-                    "checkInDate": checkin,
-                    "checkOutDate": checkout,
-                    "rateCode": "RAC",
-                    "room": {
-                        "type": random.choice(["STANDARD", "SUPERIOR", "DELUXE"]),
-                        "typeEstimated": {
-                            "category": "STANDARD_ROOM",
-                            "beds": random.randint(1, 2),
-                            "bedType": "DOUBLE"
-                        }
-                    },
-                    "guests": {"adults": 1},
-                    "price": {
-                        "currency": "EGP",
-                        "base": str(total_price * 0.9),
-                        "total": str(total_price),
-                        "variations": {
-                            "average": {"base": str(rate_per_night)}
-                        }
-                    },
-                    "policies": {
-                        "cancellation": {
-                            "type": "FULL_REFUND"
-                        }
-                    }
-                }
-            ],
-            "_from_database": True,
-            "_is_generated": True
-        }
