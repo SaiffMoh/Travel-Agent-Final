@@ -9,6 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def get_lower_left(image):
     """Extract the lower left quadrant where MRZ is typically located"""
     height, width = image.shape[:2]
@@ -16,28 +17,34 @@ def get_lower_left(image):
 
 
 def detect_barcode(image):
-    """Detect and crop barcode/MRZ region from passport image"""
+    """
+    Detect and crop barcode/MRZ region from passport image.
+    Enhanced version with improved MRZ detection for horizontal text patterns.
+    """
+    # Keep the original image intact
     original = image.copy()
-    
+
+    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Compute gradient (highlight barcode-like structures)
+    # For MRZ detection: use gradient magnitude (not difference) to capture horizontal text patterns
     gradX = cv2.Sobel(gray, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
     gradY = cv2.Sobel(gray, ddepth=cv2.CV_32F, dx=0, dy=1, ksize=-1)
-    gradient = cv2.subtract(gradX, gradY)
+    # Use gradient magnitude instead of subtraction to preserve horizontal structures
+    gradient = cv2.magnitude(gradX, gradY)
     gradient = cv2.convertScaleAbs(gradient)
 
-    # Blur and threshold
-    blurred = cv2.blur(gradient, (9, 9))
-    _, thresh = cv2.threshold(blurred, 225, 255, cv2.THRESH_BINARY)
+    # Blur and threshold - lower threshold to capture more detail
+    blurred = cv2.blur(gradient, (5, 5))  # Smaller blur to preserve detail
+    _, thresh = cv2.threshold(blurred, 50, 255, cv2.THRESH_BINARY)  # Lower threshold
 
-    # Morphological operations
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 7))
+    # Morphological operations - larger horizontal kernel for MRZ text lines
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 5))  # Wider, shorter for text lines
     closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-    # Remove small blobs
-    closed = cv2.erode(closed, None, iterations=4)
-    closed = cv2.dilate(closed, None, iterations=4)
+    # Remove small blobs - reduced iterations to preserve thin structures
+    closed = cv2.erode(closed, None, iterations=2)  # Reduced from 4
+    closed = cv2.dilate(closed, None, iterations=2)  # Reduced from 4
 
     # Find contours
     cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -45,18 +52,20 @@ def detect_barcode(image):
         c = sorted(cnts, key=cv2.contourArea, reverse=True)[0]
         x, y, w, h = cv2.boundingRect(c)
 
-        # Expand the bounding box by a larger margin for better results
-        margin_x = int(w * 0.2)
-        margin_y = int(h * 0.3)
+        # Tight horizontal margins, generous vertical margins for MRZ lines
+        margin_x = int(w * 0.01)  # Minimal horizontal margin (1%)
+        margin_y = int(h * 0.8)   # Generous vertical margin to capture both MRZ lines
         x_exp = max(x - margin_x, 0)
         y_exp = max(y - margin_y, 0)
         w_exp = min(w + 2 * margin_x, original.shape[1] - x_exp)
         h_exp = min(h + 2 * margin_y, original.shape[0] - y_exp)
 
-        # Crop from the original image
+        # CRITICAL: Crop from the ORIGINAL image, not the processed one!
         cropped = original[y_exp:y_exp + h_exp, x_exp:x_exp + w_exp]
+
         return cropped
 
+    # If no barcode detected, return the original image
     logger.warning("No barcode region detected, returning original image")
     return original
 
@@ -78,69 +87,76 @@ def format_date(s: str) -> str:
 
 def parse_mrz(mrz_line: str) -> dict:
     """Parse MRZ line and extract passport information"""
-    mrz = mrz_line.strip()
-
-    # Find passport number (9 chars) + check digit, nationality (3), DOB(6)+check, sex, expiry(6)+check
-    pattern = re.compile(r'([A-Z0-9<]{9})(\d)([A-Z]{3})(\d{6})(\d)([MF<])(\d{6})(\d)')
-    m = pattern.search(mrz)
-    if not m:
-        return {"error": "MRZ pattern not found", "raw": mrz}
-
-    passport_number_raw = m.group(1)
-    passport_number = passport_number_raw.replace('<', '')
-    nationality = m.group(3)
-    birth_raw = m.group(4)
-    gender = m.group(6) if m.group(6) != '<' else ''
-    expiry_raw = m.group(7)
-
-    # Names are between the first 5 characters (P<XXX) and the passport-number match start
-    names_start = 5
-    names_end = m.start()
-    names_section = mrz[names_start:names_end]
-    # Standard MRZ: surname<<given1<given2...
-    parts = names_section.split('<<', 1)
-    surname = parts[0].replace('<', '') if parts else ''
-    given_raw = parts[1] if len(parts) > 1 else ''
-    given_parts = [p for p in given_raw.split('<') if p]
-    given_names = ' '.join(given_parts)
-
-    # Dates
-    birth_date = format_date(birth_raw)
-    expiry_date = format_date(expiry_raw)
-
-    # Compute issued date: expiry year minus 7, same month, day after expiry day
     try:
-        expiry_dt = datetime.datetime.strptime(expiry_date, "%Y-%m-%d")
-        issued_year = expiry_dt.year - 7
-        issued_day = expiry_dt.day + 1
-        # Handle month overflow
+        mrz = mrz_line.strip()
+
+        # Find passport number (9 chars) + check digit, nationality (3), DOB(6)+check, sex, expiry(6)+check
+        pattern = re.compile(r'([A-Z0-9<]{9})(\d)([A-Z]{3})(\d{6})(\d)([MF<])(\d{6})(\d)')
+        m = pattern.search(mrz)
+        if not m:
+            return {"error": "MRZ pattern not found", "raw": mrz}
+
+        passport_number_raw = m.group(1)
+        passport_number = passport_number_raw.replace('<', '')
+        nationality = m.group(3)
+        birth_raw = m.group(4)
+        gender = m.group(6) if m.group(6) != '<' else ''
+        expiry_raw = m.group(7)
+
+        # Names are between the first 5 characters (P<XXX) and the passport-number match start
+        names_start = 5
+        names_end = m.start()
+        names_section = mrz[names_start:names_end]
+        # Standard MRZ: surname<<given1<given2...
+        parts = names_section.split('<<', 1)
+        surname = parts[0].replace('<', '') if parts else ''
+        given_raw = parts[1] if len(parts) > 1 else ''
+        given_parts = [p for p in given_raw.split('<') if p]
+        given_names = ' '.join(given_parts)
+
+        # Dates
+        birth_date = format_date(birth_raw)
+        expiry_date = format_date(expiry_raw)
+
+        # Compute issued date: expiry year minus 7, same month, day after expiry day
         try:
-            issued_dt = expiry_dt.replace(year=issued_year, day=issued_day)
-        except ValueError:
-            # If day exceeds month, roll over to next month
-            next_month = expiry_dt.month + 1 if expiry_dt.month < 12 else 1
-            next_year = issued_year if expiry_dt.month < 12 else issued_year + 1
-            issued_dt = expiry_dt.replace(year=issued_year, month=next_month, day=1)
-        issued_date = issued_dt.strftime("%Y-%m-%d")
+            expiry_dt = datetime.datetime.strptime(expiry_date, "%Y-%m-%d")
+            issued_year = expiry_dt.year - 7
+            issued_day = expiry_dt.day + 1
+            # Handle month overflow
+            try:
+                issued_dt = expiry_dt.replace(year=issued_year, day=issued_day)
+            except ValueError:
+                # If day exceeds month, roll over to next month
+                next_month = expiry_dt.month + 1 if expiry_dt.month < 12 else 1
+                next_year = issued_year if expiry_dt.month < 12 else issued_year + 1
+                issued_dt = expiry_dt.replace(year=issued_year, month=next_month, day=1)
+            issued_date = issued_dt.strftime("%Y-%m-%d")
+        except Exception as e:
+            logger.error(f"Error computing issued date: {e}")
+            issued_date = "Unknown"
+
+        result = {
+            "passport_type": mrz[0] if len(mrz) > 0 else '',
+            "country_code": mrz[2:5],
+            "full_name": f"{given_names} {surname}".strip(),
+            "surname": surname,
+            "given_names": given_names,
+            "passport_number": passport_number,
+            "nationality": nationality,
+            "birth_date": birth_date,
+            "gender": gender,
+            "expiry_date": expiry_date,
+            "issued_date": issued_date,
+        }
+
+        return result
+
     except Exception as e:
-        logger.error(f"Error computing issued date: {e}")
-        issued_date = "Unknown"
-
-    result = {
-        "passport_type": mrz[0] if len(mrz) > 0 else '',
-        "country_code": mrz[2:5],
-        "full_name": f"{given_names} {surname}".strip(),
-        "surname": surname,
-        "given_names": given_names,
-        "passport_number": passport_number,
-        "nationality": nationality,
-        "birth_date": birth_date,
-        "gender": gender,
-        "expiry_date": expiry_date,
-        "issued_date": issued_date,
-    }
-
-    return result
+        return {
+            "error": str(e),
+            "raw": mrz_line
+        }
 
 
 def process_passport_file(file_path: str) -> dict:
@@ -162,7 +178,7 @@ def process_passport_file(file_path: str) -> dict:
             
             doc = fitz.open(file_path)
             
-            # Convert first page to image
+            # Convert first page to image with high DPI
             if len(doc) > 0:
                 page = doc[0]
                 pix = page.get_pixmap(dpi=600)
@@ -186,12 +202,14 @@ def process_passport_file(file_path: str) -> dict:
         else:
             return {"error": f"Unsupported file format: {extension}"}
 
-        # Process the image
+        # Process the image - extract lower left quadrant
         passport = get_lower_left(passport)
+        
+        # Detect and crop MRZ region
         passport = detect_barcode(passport)
         
-        # Upscale for better OCR
-        scale_factor = 2
+        # Upscale for better OCR (using higher scale factor for better results)
+        scale_factor = 4
         passport = cv2.resize(passport, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
         
         # Read barcodes/MRZ
@@ -249,6 +267,7 @@ def generate_passport_html(passports_data: list) -> str:
                 <h4 class="text-lg font-semibold text-red-700 mb-2">Passport #{idx} - Error</h4>
                 <p class="text-red-600">{passport.get('error', 'Unknown error')}</p>
                 {f'<p class="text-sm text-gray-600 mt-1">File: {passport.get("filename", "Unknown")}</p>' if passport.get("filename") else ''}
+                {f'<p class="text-xs text-gray-500 mt-1 font-mono">Raw: {passport.get("raw", "")}</p>' if passport.get("raw") else ''}
             </div>
             """
         else:
@@ -309,4 +328,3 @@ def generate_passport_html(passports_data: list) -> str:
     
     html += "</div>"
     return html
-
