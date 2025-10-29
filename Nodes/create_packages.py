@@ -3,14 +3,15 @@ from datetime import datetime
 from typing import Dict, List, Any
 
 def create_packages(state: TravelSearchState) -> TravelSearchState:
-    """Create 7 travel packages by matching flight offers with their corresponding hotel offers."""
+    """Create 3 travel packages and identify the optimal (benchmark) package."""
 
-    flights_by_day = [state.get(f"flight_offers_day_{i}", []) for i in range(1, 8)]
-    hotels_by_duration = [state.get(f"hotel_offers_duration_{i}", []) for i in range(1, 8)]
+    # Changed from 8 to 4 (3 days only)
+    flights_by_day = [state.get(f"flight_offers_day_{i}", []) for i in range(1, 4)]
+    hotels_by_duration = [state.get(f"hotel_offers_duration_{i}", []) for i in range(1, 4)]
 
     packages = []
 
-    for day in range(1, 8):
+    for day in range(1, 4):  # Changed from 8 to 4
         package = create_single_package(
             package_id=day,
             flights=flights_by_day[day-1],
@@ -21,8 +22,111 @@ def create_packages(state: TravelSearchState) -> TravelSearchState:
         if package:
             packages.append(package)
 
+    # ============================================================================
+    # IDENTIFY OPTIMAL PACKAGE (BENCHMARK)
+    # ============================================================================
+    if packages:
+        optimal_package = identify_optimal_package(packages)
+        
+        # Mark the optimal package
+        for pkg in packages:
+            pkg["is_optimal"] = (pkg["package_id"] == optimal_package["package_id"])
+            
+            # Calculate savings compared to optimal
+            if not pkg["is_optimal"]:
+                pkg["savings_vs_optimal"] = calculate_savings(pkg, optimal_package)
+            else:
+                pkg["savings_vs_optimal"] = None
+
     state["travel_packages"] = packages
     return state
+
+
+def identify_optimal_package(packages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Identify the optimal package based on:
+    1. Lowest total price (flight + min hotel)
+    2. Best convenience (direct flights preferred)
+    3. Hotel availability
+    
+    Returns the package that offers best overall value.
+    """
+    
+    scored_packages = []
+    
+    for pkg in packages:
+        score = 0
+        
+        # Price score (lower is better)
+        flight_price = pkg.get("pricing", {}).get("flight_price", 0)
+        hotel_price = pkg.get("hotels", {}).get("min_price", 0)
+        
+        # Normalize prices to comparable range (0-100 scale)
+        # Using inverse so lower price = higher score
+        price_score = 100 - min((flight_price / 1000), 100)  # Adjust denominator based on typical prices
+        
+        # Convenience score (direct flights = bonus)
+        flight_offers = pkg.get("flight_offers", [])
+        if flight_offers:
+            first_flight = flight_offers[0]
+            summary = first_flight.get("summary", {})
+            
+            outbound_stops = summary.get("outbound", {}).get("stops", 0)
+            return_stops = summary.get("return", {}).get("stops", 0) if summary.get("return") else 0
+            
+            # Direct flights get bonus points
+            if outbound_stops == 0:
+                score += 20
+            if return_stops == 0:
+                score += 20
+        
+        # Hotel availability score
+        available_hotels = pkg.get("hotels", {}).get("available_count", 0)
+        hotel_score = min(available_hotels * 2, 20)  # Cap at 20 points
+        
+        # Total score
+        total_score = price_score + score + hotel_score
+        
+        scored_packages.append({
+            "package": pkg,
+            "score": total_score,
+            "flight_price": flight_price,
+            "hotel_price": hotel_price,
+            "total_price": flight_price + hotel_price
+        })
+    
+    # Sort by total price first (primary factor), then by score
+    scored_packages.sort(key=lambda x: (x["total_price"], -x["score"]))
+    
+    return scored_packages[0]["package"]
+
+
+def calculate_savings(current_package: Dict[str, Any], optimal_package: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Calculate how much MORE the current package costs vs optimal package.
+    Returns savings breakdown (negative = you pay more).
+    """
+    
+    current_flight = current_package.get("pricing", {}).get("flight_price", 0)
+    optimal_flight = optimal_package.get("pricing", {}).get("flight_price", 0)
+    
+    current_hotel = current_package.get("hotels", {}).get("min_price", 0)
+    optimal_hotel = optimal_package.get("hotels", {}).get("min_price", 0)
+    
+    flight_diff = current_flight - optimal_flight
+    hotel_diff = current_hotel - optimal_hotel
+    total_diff = flight_diff + hotel_diff
+    
+    return {
+        "flight_difference": flight_diff,
+        "hotel_difference": hotel_diff,
+        "total_difference": total_diff,
+        "flight_currency": current_package.get("pricing", {}).get("flight_currency", "EGP"),
+        "hotel_currency": current_package.get("hotels", {}).get("currency", "N/A"),
+        "is_more_expensive": total_diff > 0,
+        "percentage_more": (total_diff / (optimal_flight + optimal_hotel) * 100) if (optimal_flight + optimal_hotel) > 0 else 0
+    }
+
 
 def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels: List[Dict[str, Any]],
                          checkin_date: str, checkout_date: str) -> Dict[str, Any]:
@@ -57,7 +161,6 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
         api_hotels_sorted = sorted(api_hotels, key=get_hotel_price)
         company_hotels_sorted = sorted(company_hotels, key=get_hotel_price)
 
-        # Get the cheapest hotel price and its currency
         min_hotel_price = 0
         hotel_currency = "N/A"
         if available_hotels:
@@ -109,18 +212,21 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                 "flight_currency": flight_currency,
                 "min_hotel_price": min_hotel_price,
                 "hotel_currency": hotel_currency,
-                # Remove total_min_price since currencies are different
                 "note": "Prices in different currencies - not combined"
             },
             "package_summary": f"Package {package_id}: {duration_nights} nights, "
                               f"flight price {flight_price:,.2f} {flight_currency}, "
-                              f"{len(available_hotels)} hotels available from {min_hotel_price:,.2f} {hotel_currency}"
+                              f"{len(available_hotels)} hotels available from {min_hotel_price:,.2f} {hotel_currency}",
+            # Will be populated by identify_optimal_package()
+            "is_optimal": False,
+            "savings_vs_optimal": None
         }
 
         return package
 
     except Exception:
         return None
+
 
 def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
     """Create a summary of flight information with enhanced details."""
@@ -144,7 +250,6 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
             first_segment = outbound_segments[0]
             last_segment = outbound_segments[-1]
 
-            # Extract flight details from segments
             outbound_flight_details = []
             for segment in outbound_segments:
                 flight_detail = {
@@ -194,7 +299,6 @@ def get_flight_summary(flight: Dict[str, Any]) -> Dict[str, Any]:
                 first_return = return_segments[0]
                 last_return = return_segments[-1]
 
-                # Extract return flight details from segments
                 return_flight_details = []
                 for segment in return_segments:
                     flight_detail = {

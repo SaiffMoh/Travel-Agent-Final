@@ -5,24 +5,19 @@ from datetime import datetime
 
 def toHTML(state: TravelSearchState) -> TravelSearchState:
     """Convert travel packages to clean HTML format with LLM summary."""
-
     travel_packages = state.get("travel_packages", [])
     package_summary = state.get("package_summary", "")
-
     html_content = generate_complete_html(travel_packages, package_summary)
-
     state["travel_packages_html"] = [html_content]
     state["complete_travel_html"] = html_content
     state["current_node"] = "to_html"
-
     return state
 
 def generate_complete_html(packages: List[dict], summary: str) -> str:
-    """Generate complete HTML with summary and package tables."""
-
+    """Generate complete HTML with summary and collapsible package cards using native HTML details/summary."""
     html_parts = []
     
-    # Add minimal CSS styling
+    # Add enhanced CSS styling - NO JAVASCRIPT
     html_parts.append("""
     <style>
         .travel-summary {
@@ -38,12 +33,111 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             border-radius: 8px;
             margin-bottom: 24px;
             overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .package-container.optimal {
+            border: 2px solid #28a745;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.2);
+        }
+        
+        /* Native details/summary styling */
+        .package-details {
+            border: none;
+        }
+        
+        .package-details[open] {
+            background: rgba(0, 0, 0, 0.01);
         }
         
         .package-header {
             background: rgba(0, 0, 0, 0.02);
             padding: 16px;
             border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: background 0.2s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            list-style: none;
+        }
+        
+        .package-header::-webkit-details-marker {
+            display: none;
+        }
+        
+        .package-header:hover {
+            background: rgba(0, 0, 0, 0.04);
+        }
+        
+        .package-container.optimal .package-header {
+            background: rgba(40, 167, 69, 0.08);
+            border-bottom: 1px solid rgba(40, 167, 69, 0.2);
+        }
+        
+        .package-header-left {
+            flex: 1;
+        }
+        
+        .package-header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .optimal-badge {
+            background: #28a745;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .savings-badge {
+            background: #dc3545;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .collapse-indicator {
+            font-size: 1.2em;
+            transition: transform 0.3s ease;
+            color: #007bff;
+        }
+        
+        .package-details[open] .collapse-indicator {
+            transform: rotate(180deg);
+        }
+        
+        .package-summary-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 0.9em;
+        }
+        
+        .summary-item {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .summary-label {
+            color: rgba(0, 0, 0, 0.6);
+            font-size: 0.85em;
+            margin-bottom: 2px;
+        }
+        
+        .summary-value {
+            font-weight: 600;
+            color: #007bff;
         }
         
         .package-content {
@@ -169,6 +263,10 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             .data-table td {
                 padding: 8px 6px;
             }
+            
+            .package-summary-row {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
     """)
@@ -191,36 +289,125 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
     return "".join(html_parts)
 
 def generate_package_html(package: dict, package_num: int) -> str:
-    """Generate HTML for a single travel package."""
-
+    """Generate HTML for a single collapsible travel package using native HTML details/summary."""
     package_id = package.get("package_id", package_num)
     travel_dates = package.get("travel_dates", {})
     flight_offers = package.get("flight_offers", [])
     hotel_info = package.get("hotels", {})
     pricing = package.get("pricing", {})
-
+    is_optimal = package.get("is_optimal", False)
+    savings_vs_optimal = package.get("savings_vs_optimal")
+    
     duration = travel_dates.get("duration_nights", "N/A")
     checkin = travel_dates.get("checkin", "N/A")
     checkout = travel_dates.get("checkout", "N/A")
+    
+    flight_price = pricing.get("flight_price", 0)
+    flight_currency = pricing.get("flight_currency", "")
+    hotel_price = hotel_info.get("min_price", 0)
+    hotel_currency = hotel_info.get("currency", "N/A")
+    available_hotels = hotel_info.get("available_count", 0)
+    
+    # Get flight summary
+    flight_summary = ""
+    if flight_offers:
+        first_flight = flight_offers[0]
+        summary = first_flight.get("summary", {})
+        outbound = summary.get("outbound", {})
+        outbound_stops = outbound.get("stops", 0)
+        stops_text = "Direct" if outbound_stops == 0 else f"{outbound_stops} stop{'s' if outbound_stops > 1 else ''}"
+        flight_summary = f"{stops_text}"
+
+    # Container classes
+    container_classes = "package-container"
+    if is_optimal:
+        container_classes += " optimal"
+
+    # Use 'open' attribute only for optimal package
+    details_open = ' open' if is_optimal else ''
 
     html_parts = [f"""
-    <div class="package-container">
-        <div class="package-header">
-            <h3>📦 Package {package_id}</h3>
-            <div class="package-duration">{duration} Night{'s' if duration != 1 else ''} ({checkin} to {checkout})</div>
-        </div>
-        <div class="package-content">
+    <div class="{container_classes}">
+        <details class="package-details"{details_open}>
+            <summary class="package-header">
+                <div class="package-header-left">
+                    <h3>📦 Package {package_id} - {duration} Night{'s' if duration != 1 else ''}</h3>
+                    <div class="package-summary-row">
+                        <div class="summary-item">
+                            <span class="summary-label">Dates</span>
+                            <span class="summary-value">{checkin} to {checkout}</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Flight</span>
+                            <span class="summary-value">{flight_price:,.2f} {flight_currency} • {flight_summary}</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Hotels</span>
+                            <span class="summary-value">{available_hotels} available from {hotel_price:,.2f} {hotel_currency}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="package-header-right">
     """]
 
-    # Add basic package info table first
+    # Add optimal badge
+    if is_optimal:
+        html_parts.append("""
+                    <span class="optimal-badge">⭐ Best Value</span>
+        """)
+    elif savings_vs_optimal:
+        total_diff = savings_vs_optimal.get("total_difference", 0)
+        if total_diff > 0:
+            percentage = savings_vs_optimal.get("percentage_more", 0)
+            html_parts.append(f"""
+                    <span class="savings-badge">+{percentage:.0f}% more</span>
+            """)
+
+    html_parts.append("""
+                    <span class="collapse-indicator">▼</span>
+                </div>
+            </summary>
+            <div class="package-content">
+    """)
+
+    # Add detailed package content
     html_parts.append(generate_package_info_table(travel_dates, pricing))
+    
+    # Add savings comparison if not optimal
+    if not is_optimal and savings_vs_optimal:
+        html_parts.append(generate_savings_comparison(savings_vs_optimal))
+    
     html_parts.append(generate_pricing_table(pricing))
     html_parts.append(generate_flight_offers_table(flight_offers))
     html_parts.append(generate_hotel_table(hotel_info))
 
-    html_parts.append("</div></div>")
+    html_parts.append("""
+            </div>
+        </details>
+    </div>
+    """)
 
     return "".join(html_parts)
+
+def generate_savings_comparison(savings_vs_optimal: dict) -> str:
+    """Generate savings comparison section."""
+    
+    flight_diff = savings_vs_optimal.get("flight_difference", 0)
+    hotel_diff = savings_vs_optimal.get("hotel_difference", 0)
+    total_diff = savings_vs_optimal.get("total_difference", 0)
+    percentage = savings_vs_optimal.get("percentage_more", 0)
+    flight_curr = savings_vs_optimal.get("flight_currency", "EGP")
+    hotel_curr = savings_vs_optimal.get("hotel_currency", "N/A")
+    
+    return f"""
+    <div class="currency-note" style="background: rgba(220, 53, 69, 0.1); border-color: rgba(220, 53, 69, 0.3);">
+        <strong>💡 Price Comparison vs. Best Value Package:</strong><br>
+        This package costs <strong>{percentage:.1f}% more</strong> than the optimal option:<br>
+        • Flight: +{flight_diff:,.2f} {flight_curr}<br>
+        • Hotel: +{hotel_diff:,.2f} {hotel_curr}<br>
+        Consider the Best Value package for better savings!
+    </div>
+    """
 
 def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
     """Generate basic package information table."""
@@ -255,7 +442,6 @@ def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
 
 def generate_pricing_table(pricing: dict) -> str:
     """Generate pricing summary table with separate currencies."""
-
     flight_price = pricing.get("flight_price", 0)
     flight_currency = pricing.get("flight_currency", "")
     hotel_price = pricing.get("min_hotel_price", 0)
@@ -294,7 +480,6 @@ def generate_pricing_table(pricing: dict) -> str:
 
 def generate_flight_offers_table(flight_offers: List[dict]) -> str:
     """Generate table for all flight offers with enhanced details."""
-
     html_parts = [f'<h4 class="section-title">✈️ Flight Offers</h4>']
 
     if not flight_offers:
@@ -315,7 +500,6 @@ def generate_flight_offers_table(flight_offers: List[dict]) -> str:
                     <div class="flight-seats">Available Seats: {bookable_seats}</div>
                 </div>
             </div>
-
             <table class="data-table flight-details-table">
                 <thead>
                     <tr>
@@ -397,7 +581,6 @@ def process_flight_segments(flight_data: dict, direction: str) -> str:
 
 def generate_hotel_table(hotel_info: dict) -> str:
     """Generate separate tables for API and company hotel options."""
-
     html_parts = [f'<h4 class="section-title">🏨 Hotel Options</h4>']
 
     if not hotel_info:
@@ -430,7 +613,6 @@ def generate_hotel_table(hotel_info: dict) -> str:
             hotel_data = hotel.get("hotel", {})
             best_offers = hotel.get("best_offers", [])
             is_available = hotel.get("available", True)
-
             hotel_name = hotel_data.get("name", f"Hotel {i}")
 
             if best_offers:
@@ -494,7 +676,6 @@ def generate_hotel_table(hotel_info: dict) -> str:
             hotel_data = hotel.get("hotel", {})
             best_offers = hotel.get("best_offers", [])
             is_available = hotel.get("available", True)
-
             hotel_name = hotel_data.get("name", f"Hotel {i}")
 
             if best_offers:
@@ -532,14 +713,12 @@ def generate_hotel_table(hotel_info: dict) -> str:
                 """)
 
     html_parts.append('</tbody></table>')
-
     return "".join(html_parts)
 
 def format_datetime(datetime_str: str) -> str:
     """Format datetime string for display."""
     if not datetime_str:
         return "N/A"
-
     try:
         if "T" in datetime_str:
             dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))

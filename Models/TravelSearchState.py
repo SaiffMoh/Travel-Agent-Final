@@ -1,3 +1,4 @@
+from optparse import Option
 from typing import List, Optional, Dict, Any, TypedDict
 
 class TravelSearchState(TypedDict, total=False):
@@ -98,3 +99,5 @@ class TravelSearchState(TypedDict, total=False):
     cheapest_date_results: List[Dict[str, Any]]
     cheapest_date_error: Optional[str]
     cheapest_date_html: Optional[str]
+    web_search_html: Optional[str]
+    web_search_result: Optional[str]

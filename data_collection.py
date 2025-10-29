@@ -375,18 +375,12 @@ if __name__ == "__main__":
     
     # Define routes with cabin classes
     routes = [
-        # EXISTING CITIES - BUSINESS CLASS ONLY (we already have economy)
-        {"origin": "CAI", "destination": "DXB", "cabins": ["BUSINESS"]},
-        {"origin": "CAI", "destination": "ALG", "cabins": ["BUSINESS"]},
-        {"origin": "CAI", "destination": "RUH", "cabins": ["BUSINESS"]},
-        {"origin": "CAI", "destination": "AUH", "cabins": ["BUSINESS"]},
+
         
         # NEW CITIES - BOTH ECONOMY AND BUSINESS
-        {"origin": "CAI", "destination": "BCN", "cabins": ["ECONOMY", "BUSINESS"]},  # Barcelona
-        {"origin": "CAI", "destination": "MAD", "cabins": ["ECONOMY", "BUSINESS"]},  # Madrid
-        {"origin": "CAI", "destination": "DMM", "cabins": ["ECONOMY", "BUSINESS"]},  # Dammam
-        {"origin": "CAI", "destination": "JFK", "cabins": ["ECONOMY", "BUSINESS"]},  # New York
-        {"origin": "CAI", "destination": "LAX", "cabins": ["ECONOMY", "BUSINESS"]},  # Los Angeles
+        {"origin": "CAI", "destination": "JFK", "cabins": ["ECONOMY", "BUSINESS"]},  # Barcelona
+        {"origin": "CAI", "destination": "LAX", "cabins": ["ECONOMY", "BUSINESS"]},  # Madrid
+        {"origin": "CAI", "destination": "HND", "cabins": ["ECONOMY", "BUSINESS"]},  # Dammam
     ]
     
     print("""

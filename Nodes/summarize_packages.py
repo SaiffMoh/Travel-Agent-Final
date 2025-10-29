@@ -2,6 +2,7 @@ from Models.TravelSearchState import TravelSearchState
 from Utils.watson_config import llm_generic, ModelType
 import json
 import logging
+import re
 from Prompts.summary_prompt import build_compact_summary_prompt
 
 # Set up logging
@@ -152,6 +153,10 @@ def compress_package_for_summary(package):
     # Extract dates
     travel_dates = package.get("travel_dates", {})
     
+    # Extract optimal/savings info
+    is_optimal = package.get("is_optimal", False)
+    savings_vs_optimal = package.get("savings_vs_optimal")
+    
     return {
         "package_id": package.get("package_id"),
         "search_date": package.get("search_date"),
@@ -159,34 +164,54 @@ def compress_package_for_summary(package):
         "checkout": travel_dates.get("checkout"),
         "nights": travel_dates.get("duration_nights"),
         "flight": flight_info,
-        "hotels": hotel_info
+        "hotels": hotel_info,
+        "is_optimal": is_optimal,
+        "savings_vs_optimal": savings_vs_optimal
     }
 
 def create_fallback_summary(packages):
-    """Create a basic summary if LLM fails."""
+    """Create a basic summary if LLM fails, highlighting optimal package."""
     if not packages:
         return "No travel packages available."
 
     package_count = len(packages)
     
-    # Find cheapest package by flight price (since currencies differ)
-    cheapest_package = min(
-        packages, 
-        key=lambda x: x.get("pricing", {}).get("flight_price", float('inf'))
-    )
+    # Find the optimal package
+    optimal_package = None
+    for pkg in packages:
+        if pkg.get("is_optimal", False):
+            optimal_package = pkg
+            break
     
-    flight_price = cheapest_package.get("pricing", {}).get("flight_price", 0)
-    flight_curr = cheapest_package.get("pricing", {}).get("flight_currency", "EGP")
+    if not optimal_package:
+        # Fallback to cheapest if no optimal marked
+        optimal_package = min(
+            packages, 
+            key=lambda x: x.get("pricing", {}).get("flight_price", float('inf'))
+        )
     
-    hotel_price = cheapest_package.get("hotels", {}).get("min_price", 0)
-    hotel_curr = cheapest_package.get("hotels", {}).get("currency", "N/A")
+    flight_price = optimal_package.get("pricing", {}).get("flight_price", 0)
+    flight_curr = optimal_package.get("pricing", {}).get("flight_currency", "EGP")
     
-    nights = cheapest_package.get("travel_dates", {}).get("duration_nights", 0)
+    hotel_price = optimal_package.get("hotels", {}).get("min_price", 0)
+    hotel_curr = optimal_package.get("hotels", {}).get("currency", "N/A")
+    
+    nights = optimal_package.get("travel_dates", {}).get("duration_nights", 0)
+    optimal_id = optimal_package.get("package_id", 1)
+    
+    # Check if optimal has direct flights
+    flight_offers = optimal_package.get("flight_offers", [])
+    flight_type = "with convenient flight times"
+    if flight_offers:
+        summary = flight_offers[0].get("summary", {})
+        outbound = summary.get("outbound", {})
+        if outbound.get("stops", 0) == 0:
+            flight_type = "with direct flights"
 
     summary = f"""Great! I found {package_count} travel package{'s' if package_count != 1 else ''} for your {nights}-night trip.
 
-The most affordable option starts from {flight_price:,.0f} {flight_curr} for flights and {hotel_price:,.0f} {hotel_curr} for hotels.
+⭐ Package {optimal_id} offers the best value {flight_type}, starting from {flight_price:,.0f} {flight_curr} for flights and {hotel_price:,.0f} {hotel_curr} for hotels.
 
-Each package offers multiple flight options and various hotel choices at different price points. I recommend comparing the departure times and hotel locations to find what works best for you. Check the details below to select your preferred combination!"""
+Each package offers multiple flight options and various hotel choices at different price points. The other packages are available at slightly higher prices but may offer different departure times or hotel options. Check the details below to select your preferred combination!"""
     
     return summary
