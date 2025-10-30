@@ -159,7 +159,7 @@ class TravelDataCollector:
                             "travelers": [{"id": "1", "travelerType": "ADULT"}],
                             "sources": ["GDS"],
                             "searchCriteria": {
-                                "maxFlightOffers": 5,
+                                "maxFlightOffers": 1,
                                 "flightFilters": {
                                     "cabinRestrictions": [{
                                         "cabin": cabin,

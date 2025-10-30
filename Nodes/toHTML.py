@@ -292,7 +292,7 @@ def generate_package_html(package: dict, package_num: int) -> str:
     """Generate HTML for a single collapsible travel package using native HTML details/summary."""
     package_id = package.get("package_id", package_num)
     travel_dates = package.get("travel_dates", {})
-    flight_offers = package.get("flight_offers", [])
+    flight_offer = package.get("flight_offer", {})  # Changed from flight_offers to flight_offer
     hotel_info = package.get("hotels", {})
     pricing = package.get("pricing", {})
     is_optimal = package.get("is_optimal", False)
@@ -308,11 +308,10 @@ def generate_package_html(package: dict, package_num: int) -> str:
     hotel_currency = hotel_info.get("currency", "N/A")
     available_hotels = hotel_info.get("available_count", 0)
     
-    # Get flight summary
+    # Get flight summary from single flight offer
     flight_summary = ""
-    if flight_offers:
-        first_flight = flight_offers[0]
-        summary = first_flight.get("summary", {})
+    if flight_offer:
+        summary = flight_offer.get("summary", {})
         outbound = summary.get("outbound", {})
         outbound_stops = outbound.get("stops", 0)
         stops_text = "Direct" if outbound_stops == 0 else f"{outbound_stops} stop{'s' if outbound_stops > 1 else ''}"
@@ -378,7 +377,7 @@ def generate_package_html(package: dict, package_num: int) -> str:
         html_parts.append(generate_savings_comparison(savings_vs_optimal))
     
     html_parts.append(generate_pricing_table(pricing))
-    html_parts.append(generate_flight_offers_table(flight_offers))
+    html_parts.append(generate_flight_details_section(flight_offer))  # Changed function call
     html_parts.append(generate_hotel_table(hotel_info))
 
     html_parts.append("""
@@ -422,7 +421,7 @@ def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
             </tr>
             <tr>
                 <td class="info-label">Check-out Date</td>
-                <td class="info-value">{travel_dates.get('checkout', 'N/A')}</td>
+                <td class="info-value">{travel_dates.get('checkout','N/A')}</td>
             </tr>
             <tr>
                 <td class="info-label">Duration</td>
@@ -478,50 +477,49 @@ def generate_pricing_table(pricing: dict) -> str:
     </table>
     """
 
-def generate_flight_offers_table(flight_offers: List[dict]) -> str:
-    """Generate table for all flight offers with enhanced details."""
-    html_parts = [f'<h4 class="section-title">✈️ Flight Offers</h4>']
+def generate_flight_details_section(flight_offer: dict) -> str:
+    """Generate section for single flight offer with enhanced details."""
+    html_parts = [f'<h4 class="section-title">✈️ Flight Details</h4>']
 
-    if not flight_offers:
-        return '<h4 class="section-title">✈️ Flight Offers</h4><p class="no-data">No flight information available.</p>'
+    if not flight_offer:
+        return '<h4 class="section-title">✈️ Flight Details</h4><p class="no-data">No flight information available.</p>'
 
-    for flight_idx, flight_info in enumerate(flight_offers):
-        summary = flight_info.get("summary", {})
-        price = flight_info.get("price", 0)
-        currency = flight_info.get("currency", "")
-        bookable_seats = summary.get("numberOfBookableSeats", 0)
+    summary = flight_offer.get("summary", {})
+    price = flight_offer.get("price", 0)
+    currency = flight_offer.get("currency", "")
+    bookable_seats = summary.get("numberOfBookableSeats", 0)
 
-        html_parts.append(f"""
-        <div class="flight-offer">
-            <div class="flight-offer-header">
-                <h5 class="flight-option-title">Flight Option {flight_idx + 1}</h5>
-                <div class="flight-price-info">
-                    <div class="flight-total-price">{price:,.2f} {currency}</div>
-                    <div class="flight-seats">Available Seats: {bookable_seats}</div>
-                </div>
+    html_parts.append(f"""
+    <div class="flight-offer">
+        <div class="flight-offer-header">
+            <h5 class="flight-option-title">Selected Flight</h5>
+            <div class="flight-price-info">
+                <div class="flight-total-price">{price:,.2f} {currency}</div>
+                <div class="flight-seats">Available Seats: {bookable_seats}</div>
             </div>
-            <table class="data-table flight-details-table">
-                <thead>
-                    <tr>
-                        <th class="flight-header">Direction</th>
-                        <th class="flight-header">Flight Details</th>
-                        <th class="flight-header">Route</th>
-                        <th class="flight-header">Departure</th>
-                        <th class="flight-header">Arrival</th>
-                        <th class="flight-header">Aircraft</th>
-                        <th class="flight-header">Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """)
+        </div>
+        <table class="data-table flight-details-table">
+            <thead>
+                <tr>
+                    <th class="flight-header">Direction</th>
+                    <th class="flight-header">Flight Details</th>
+                    <th class="flight-header">Route</th>
+                    <th class="flight-header">Departure</th>
+                    <th class="flight-header">Arrival</th>
+                    <th class="flight-header">Aircraft</th>
+                    <th class="flight-header">Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+    """)
 
-        # Process outbound flights
-        html_parts.append(process_flight_segments(summary.get("outbound"), "Outbound"))
-        
-        # Process return flights  
-        html_parts.append(process_flight_segments(summary.get("return"), "Return"))
+    # Process outbound flights
+    html_parts.append(process_flight_segments(summary.get("outbound"), "Outbound"))
+    
+    # Process return flights  
+    html_parts.append(process_flight_segments(summary.get("return"), "Return"))
 
-        html_parts.append("</tbody></table></div>")
+    html_parts.append("</tbody></table></div>")
 
     return "".join(html_parts)
 
@@ -591,7 +589,7 @@ def generate_hotel_table(hotel_info: dict) -> str:
 
     # API Hotels Section
     html_parts.append(f"""
-    <h5 class="subsection-title">🌐 API Hotel Options</h5>
+    <h5 class="subsection-title">🌐 Other Hotel Options</h5>
     <table class="data-table api-hotels-table">
         <thead>
             <tr>
@@ -607,7 +605,7 @@ def generate_hotel_table(hotel_info: dict) -> str:
     """)
 
     if api_hotels.get("total_found", 0) == 0:
-        html_parts.append('<tr><td colspan="6" class="no-data-cell">No API hotels available</td></tr>')
+        html_parts.append('<tr><td colspan="6" class="no-data-cell">No Other hotels available</td></tr>')
     else:
         for i, hotel in enumerate(api_hotels.get("top_options", [])[:5], 1):
             hotel_data = hotel.get("hotel", {})

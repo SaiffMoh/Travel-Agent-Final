@@ -32,7 +32,7 @@ def format_body_node(state: TravelSearchState) -> TravelSearchState:
             "travelers": [{"id": "1", "travelerType": "ADULT"}],
             "sources": ["GDS"],
             "searchCriteria": {
-                "maxFlightOffers": 3,
+                "maxFlightOffers": 1,
                 "flightFilters": {
                     "cabinRestrictions": [{
                         "cabin": cabin,

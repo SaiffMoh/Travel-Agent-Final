@@ -36,7 +36,7 @@ def get_flight_offers_node(state: TravelSearchState) -> TravelSearchState:
 
         if "searchCriteria" not in body:
             body["searchCriteria"] = {}
-        body["searchCriteria"]["maxFlightOffers"] = 3
+        body["searchCriteria"]["maxFlightOffers"] = 1
         bodies.append((day_offset + 1, query_date, body))
 
     # Sequential search across 3 days

@@ -66,10 +66,9 @@ def identify_optimal_package(packages: List[Dict[str, Any]]) -> Dict[str, Any]:
         price_score = 100 - min((flight_price / 1000), 100)  # Adjust denominator based on typical prices
         
         # Convenience score (direct flights = bonus)
-        flight_offers = pkg.get("flight_offers", [])
-        if flight_offers:
-            first_flight = flight_offers[0]
-            summary = first_flight.get("summary", {})
+        flight_offer = pkg.get("flight_offer", {})
+        if flight_offer:
+            summary = flight_offer.get("summary", {})
             
             outbound_stops = summary.get("outbound", {}).get("stops", 0)
             return_stops = summary.get("return", {}).get("stops", 0) if summary.get("return") else 0
@@ -136,6 +135,7 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
         return None
 
     try:
+        # Since we only have 1 flight offer per package now
         flight = flights[0] if flights else {}
         flight_price = float(flight.get("price", {}).get("total", 0)) if flight else 0
         flight_currency = flight.get("price", {}).get("currency", "EGP") if flight else "EGP"
@@ -169,14 +169,13 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                 min_hotel_price = float(cheapest_hotel["best_offers"][0]["offer"].get("price", {}).get("total", 0))
                 hotel_currency = cheapest_hotel["best_offers"][0].get("currency", "N/A")
 
-        flight_offers = [
-            {
-                "offer": flight,
-                "price": float(flight.get("price", {}).get("total", 0)),
-                "currency": flight.get("price", {}).get("currency", "EGP"),
-                "summary": get_flight_summary(flight)
-            } for flight in flights
-        ]
+        # Create single flight offer object
+        flight_offer = {
+            "offer": flight,
+            "price": float(flight.get("price", {}).get("total", 0)),
+            "currency": flight.get("price", {}).get("currency", "EGP"),
+            "summary": get_flight_summary(flight)
+        }
 
         package = {
             "package_id": package_id,
@@ -186,7 +185,7 @@ def create_single_package(package_id: int, flights: List[Dict[str, Any]], hotels
                 "checkout": checkout_date,
                 "duration_nights": duration_nights
             },
-            "flight_offers": flight_offers,
+            "flight_offer": flight_offer,  # Single flight offer instead of list
             "hotels": {
                 "api_hotels": {
                     "total_found": len(api_hotels),
