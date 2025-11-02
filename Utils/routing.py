@@ -1,7 +1,7 @@
 from Models.TravelSearchState import TravelSearchState
 from Utils.state_reset import reset_travel_state_for_new_search
 from Utils.intent_detection import detect_user_intent
-from Nodes.visa_rag_node import enhanced_get_country  # Updated import
+from Nodes.visa_rag_node import enhanced_get_country
 from Utils.watson_config import llm
 import os
 
@@ -22,11 +22,50 @@ def should_proceed_to_search(state: TravelSearchState) -> str:
     else:
         return "need_more_info"
 
-def smart_router(state: TravelSearchState) -> str:
-    """Smart routing function that can handle multiple flows seamlessly"""
-    intent = detect_user_intent(state)
+def detect_visa_inquiry(state: TravelSearchState) -> tuple[bool, str | None]:
+    """
+    Detect if the user is asking about visa requirements.
+    Returns: (is_visa_inquiry, detected_country)
+    """
+    user_message = state.get("current_message") or state.get("user_message", "")
+    destination = state.get("destination")
     
-    print(f"Router: Detected intent - {intent}")
+    # Check for visa-related keywords
+    visa_keywords = ["visa", "entry requirements", "travel requirements", "do i need", 
+                     "requirements for", "documents needed", "travel documents"]
+    
+    message_lower = user_message.lower()
+    contains_visa_keyword = any(keyword in message_lower for keyword in visa_keywords)
+    
+    if contains_visa_keyword:
+        country = enhanced_get_country(user_message, destination)
+        return True, country
+    
+    return False, None
+
+def smart_router(state: TravelSearchState) -> str:
+    """
+    Enhanced smart routing with visa RAG check for all flows.
+    Priority order:
+    1. Visa inquiries (highest priority - can be asked anytime)
+    2. Invoice extraction
+    3. Travel search
+    4. General conversation
+    """
+    
+    # FIRST: Check for visa inquiry (can interrupt any flow)
+    is_visa_inquiry, detected_country = detect_visa_inquiry(state)
+    if is_visa_inquiry:
+        if detected_country:
+            print(f"Router: Visa inquiry detected for country - {detected_country}")
+            state["detected_visa_country"] = detected_country
+        else:
+            print("Router: Visa inquiry detected without clear country - routing to visa_rag for country selection")
+        return "visa_rag"
+    
+    # SECOND: Check primary intent
+    intent = detect_user_intent(state)
+    print(f"Router: Detected primary intent - {intent}")
     
     if intent == "invoice_extraction":
         print("Router: Routing to invoice_extraction node")
@@ -51,25 +90,11 @@ def smart_router(state: TravelSearchState) -> str:
             return "need_more_info"
         
         return "need_more_info"
-        
-    elif intent == "visa_inquiry":
-        user_message = state.get("current_message") or state.get("user_message", "")
-        destination = state.get("destination")
-        
-        # Updated: Using enhanced_get_country function with proper parameters
-        country = enhanced_get_country(user_message, destination)
-        if country:
-            print(f"Router: Visa inquiry for country - {country}")
-            # Store detected country in state for the visa RAG node
-            state["detected_visa_country"] = country
-            return "visa_rag"
-        else:
-            print("Router: Visa inquiry without clear country - routing to visa_rag for country selection")
-            # Still route to visa_rag so it can provide the available countries list
-            return "visa_rag"
-    else:
-        if state.get("needs_followup") and state.get("followup_question"):
-            print(f"Router: General conversation with followup - {state.get('followup_question')}")
-            return "need_more_info"
-        print("Router: Defaulting to general conversation")
-        return "general_conversation"
+    
+    # Default to general conversation
+    if state.get("needs_followup") and state.get("followup_question"):
+        print(f"Router: General conversation with followup - {state.get('followup_question')}")
+        return "need_more_info"
+    
+    print("Router: Defaulting to general conversation")
+    return "general_conversation"

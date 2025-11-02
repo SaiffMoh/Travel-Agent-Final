@@ -1,6 +1,7 @@
 """
-Dynamic Graph Configuration
+Dynamic Graph Configuration with Universal Visa RAG Support
 Routes to fallback nodes when USE_FALLBACK=true, otherwise uses original nodes
+Visa RAG is now accessible from all conversation flows
 """
 
 from langgraph.graph import StateGraph, END
@@ -46,8 +47,9 @@ else:
 
 def create_travel_graph():
     """
-    Create the travel agent graph with dynamic node routing
-    Uses fallback nodes when USE_FALLBACK=true, original nodes otherwise
+    Create the travel agent graph with dynamic node routing and universal visa RAG support.
+    Visa RAG is now checked FIRST in the main.py endpoint, but can also be triggered
+    from within the graph flows if needed.
     """
     graph = StateGraph(TravelSearchState)
 
@@ -66,14 +68,14 @@ def create_travel_graph():
     graph.add_node("invoice_extraction", invoice_extraction_node)
     
     # Add the dynamically selected nodes
-    # These will be either fallback or original versions depending on USE_FALLBACK
     graph.add_node("get_flight_offers", get_flight_offers_node)
     graph.add_node("get_city_ids", get_city_IDs_node)
     graph.add_node("get_hotel_offers", get_hotel_offers_node)
 
-    # Entry point and main routing (same for both modes)
+    # Entry point and main routing
     graph.set_entry_point("llm_conversation")
     
+    # Main router with visa RAG as a possible destination
     graph.add_conditional_edges(
         "llm_conversation",
         smart_router,
@@ -91,7 +93,7 @@ def create_travel_graph():
     graph.add_edge("general_conversation", END)
     graph.add_edge("invoice_extraction", END)
     
-    # Travel flow (same for both modes)
+    # Travel flow
     graph.add_conditional_edges(
         "analyze_conversation",
         check_info_complete,
@@ -104,7 +106,7 @@ def create_travel_graph():
         }
     )
     
-    # Main travel search pipeline (same edges, but nodes behave differently)
+    # Main travel search pipeline
     graph.add_edge("normalize_info", "parse_company_hotels")
     graph.add_edge("parse_company_hotels", "format_body")
     graph.add_edge("format_body", "get_access_token")
@@ -119,21 +121,21 @@ def create_travel_graph():
     # Log the mode
     mode = "FALLBACK (with database)" if USE_FALLBACK else "ORIGINAL (API-only)"
     print(f"✅ Travel graph created in {mode} mode")
+    print(f"🔍 Visa RAG is universally accessible across all flows")
     
     return graph
 
 
-# Optional: Function to check current mode
 def get_graph_mode():
     """Returns the current graph mode configuration"""
     return {
         "use_fallback": USE_FALLBACK,
         "mode": "fallback" if USE_FALLBACK else "original",
-        "description": "Database fallback enabled" if USE_FALLBACK else "API-only mode"
+        "description": "Database fallback enabled" if USE_FALLBACK else "API-only mode",
+        "visa_rag_enabled": True
     }
 
 
-# Optional: Function to verify fallback availability
 def verify_fallback_setup():
     """Verify that fallback system is properly configured"""
     if not USE_FALLBACK:
@@ -146,7 +148,6 @@ def verify_fallback_setup():
         from database_fallback import DatabaseFallbackService
         import os.path
         
-        # Check if database exists
         db_exists = os.path.exists("travel_data.db")
         
         if not db_exists:
@@ -156,7 +157,6 @@ def verify_fallback_setup():
                 "database_found": False
             }
         
-        # Check database contents
         try:
             db = DatabaseFallbackService()
             stats = db.get_database_stats()
@@ -183,7 +183,6 @@ def verify_fallback_setup():
 
 
 if __name__ == "__main__":
-    # Test the configuration
     print("\n" + "="*60)
     print("GRAPH CONFIGURATION TEST")
     print("="*60)
@@ -192,6 +191,7 @@ if __name__ == "__main__":
     print(f"\nCurrent Mode: {mode_info['mode'].upper()}")
     print(f"USE_FALLBACK: {mode_info['use_fallback']}")
     print(f"Description: {mode_info['description']}")
+    print(f"Visa RAG Universal Access: {mode_info['visa_rag_enabled']}")
     
     if USE_FALLBACK:
         print("\n" + "-"*60)

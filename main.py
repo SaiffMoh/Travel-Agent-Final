@@ -15,6 +15,7 @@ from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
 from Nodes.invoice_extraction_node import invoice_extraction_node
 from fastapi.responses import HTMLResponse
+from Nodes.visa_rag_node import visa_rag_node
 from pathlib import Path
 import shutil
 import uuid
@@ -77,7 +78,10 @@ async def health():
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    """Handles conversations: greeting, travel search (Amadeus), visa queries, and web search."""
+    """
+    Unified chat endpoint that handles all conversation types.
+    Visa RAG is now checked FIRST for all tools before routing to specific flows.
+    """
     
     try:
         # ===== VALIDATION =====
@@ -90,7 +94,49 @@ async def chat_endpoint(request: ChatRequest):
             print("ERROR: Empty user message")
             raise HTTPException(status_code=400, detail="user_msg cannot be empty")
 
-        # ===== ROUTING BASED ON tool_id =====
+        # Get previous state once at the start (used by multiple flows)
+        previous_state = conversation_store.get_state(request.thread_id) or {}
+
+        # ===== CHECK FOR VISA INQUIRY FIRST (Universal across all tools) =====
+        from Utils.routing import detect_visa_inquiry
+        
+        # Build state for visa detection
+        temp_state = {
+            "thread_id": request.thread_id,
+            "current_message": user_message,
+            "user_message": user_message,
+            "destination": previous_state.get("destination")
+        }
+        
+        is_visa_inquiry, detected_country = detect_visa_inquiry(temp_state)
+        
+        if is_visa_inquiry:
+            print(f"🔍 Visa inquiry detected (universal check) for: {detected_country or 'country TBD'}")
+            conversation_store.add_message(request.thread_id, "user", user_message)
+            
+            state = {
+                "thread_id": request.thread_id,
+                "user_message": user_message,
+                "current_message": user_message,
+                "detected_visa_country": detected_country,
+                "destination": temp_state.get("destination"),
+                "visa_info_html": None
+            }
+            
+            result = visa_rag_node(state)
+            
+            logger.info(f"Visa RAG completed for {detected_country or 'unspecified country'}")
+            conversation_store.add_message(request.thread_id, "assistant", "Visa requirements provided")
+            
+            state_to_save = {
+                "visa_info_html": result.get("visa_info_html"),
+                "detected_visa_country": detected_country
+            }
+            conversation_store.save_state(request.thread_id, state_to_save)
+            
+            return result["visa_info_html"]
+
+        # ===== ROUTING BASED ON tool_id (if not visa inquiry) =====
         tool_id = request.tool_id
         
         # 1. WEB SEARCH ROUTING
@@ -185,8 +231,7 @@ async def chat_endpoint(request: ChatRequest):
             updated_conversation = conversation_store.get_conversation(request.thread_id)
             print(f"✓ Updated conversation: {len(updated_conversation)} messages")
 
-            previous_state = conversation_store.get_state(request.thread_id) or {}
-            
+            # Use the previous_state already retrieved at the start
             state = {
                 "thread_id": request.thread_id,
                 "conversation": updated_conversation,
@@ -266,8 +311,9 @@ async def chat_endpoint(request: ChatRequest):
                 duration=result.get("duration")
             )
 
+            # Check if visa info was generated during the flow
             if result.get("visa_info_html"):
-                print("✓ Returning visa_info_html")
+                print("✓ Returning visa_info_html from Amadeus flow")
                 conversation_store.add_message(request.thread_id, "assistant", "Visa requirements provided")
                 return result["visa_info_html"]
 
@@ -443,484 +489,6 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
 
     # Return concatenated HTML for all files
     return "".join(all_html)
-
-
-    
-from fastapi.responses import HTMLResponse
-from Nodes.flight_inquiry_node import create_flight_inquiry_graph
-import traceback
-import logging
-
-# Add this after your existing graph creation
-flight_inquiry_graph = create_flight_inquiry_graph().compile()
-
-@app.post("/api/flight-inquiry", response_class=HTMLResponse)
-async def flight_inquiry_endpoint(request: ChatRequest):
-    """
-    Handle general flight inquiries - takes origin, destination, and date
-    Returns HTML for frontend display
-    """
-    try:
-        if not request.thread_id:
-            return """
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Error: thread_id is required</p>
-            </div>
-            """
-        
-        user_message = request.user_msg.strip()
-        if not user_message:
-            return """
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Error: user_msg cannot be empty</p>
-            </div>
-            """
-
-        # Check API keys
-        required_keys = ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "OPENAI_API_KEY"]
-        missing_keys = [key for key in required_keys if not os.getenv(key)]
-        if missing_keys:
-            return f"""
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Missing API keys: {', '.join(missing_keys)}</p>
-            </div>
-            """
-
-        # Set up state for flight inquiry
-        state = {
-            "thread_id": request.thread_id,
-            "current_message": user_message,
-            "user_message": user_message,
-            "needs_followup": True,
-            "ready_to_search": False,
-            "flight_options": [],
-            "search_error": None,
-            "flight_inquiry_html": None
-        }
-
-        print(f"DEBUG: Initial state setup complete")
-        print(f"Processing flight inquiry: {user_message}")
-        
-        # Execute the flight inquiry graph
-        result = flight_inquiry_graph.invoke(state)
-        
-        print(f"DEBUG: Graph execution complete")
-        print(f"DEBUG: Final result keys: {list(result.keys())}")
-        
-        # Enhanced debugging - check flight_options in result
-        flight_options = result.get("flight_options", [])
-        print(f"DEBUG: flight_options in result: {len(flight_options)} flights")
-        if flight_options:
-            print(f"DEBUG: First flight option: {flight_options[0] if flight_options else 'None'}")
-        
-        # Check for HTML content in various possible keys
-        html_content = None
-        possible_html_keys = ["flight_inquiry_html", "html_content", "formatted_html", "result_html"]
-        
-        for key in possible_html_keys:
-            if key in result and result[key]:
-                html_content = result[key]
-                print(f"DEBUG: Found HTML content in key '{key}'")
-                break
-        
-        # If no HTML found in expected keys, check all string values for HTML-like content
-        if not html_content:
-            print("DEBUG: No HTML content found in expected keys, checking all string values")
-            for key, value in result.items():
-                if isinstance(value, str) and ("<div" in value or "<html" in value or "class=" in value):
-                    html_content = value
-                    print(f"DEBUG: Found HTML-like content in key '{key}': {value[:100]}...")
-                    break
-        
-        # Handle specific error cases
-        if result.get("search_error"):
-            error_msg = result["search_error"]
-            print(f"DEBUG: Search error detected: {error_msg}")
-            html_content = f"""
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-red-700 mb-2">Flight Search Error</h3>
-                <p class="text-red-600 mb-2">We encountered an issue while searching for flights:</p>
-                <p class="text-sm text-red-500 bg-red-100 p-2 rounded">{error_msg}</p>
-                <p class="text-sm text-gray-600 mt-2">Please try again later or contact support if the problem persists.</p>
-            </div>
-            """
-        
-        # Handle case where we have flight options but no HTML was generated
-        elif flight_options and not html_content:
-            print(f"DEBUG: Found {len(flight_options)} flights but no HTML generated, creating manual HTML")
-            
-            flights_html = ""
-            for i, flight in enumerate(flight_options[:5]):  # Show first 5 flights
-                flights_html += f"""
-                <div class="bg-white border rounded-lg p-4 mb-3 shadow-sm">
-                    <div class="flex justify-between items-start mb-2">
-                        <div class="flex-1">
-                            <span class="font-medium text-lg">{flight.get('airline', 'N/A')} {flight.get('flight_number', '')}</span>
-                            <span class="text-sm text-gray-600 ml-2">({flight.get('booking_class', 'Economy').title()})</span>
-                        </div>
-                        <div class="text-right">
-                            <span class="text-xl font-bold text-green-600">{flight.get('price', 'N/A')} {flight.get('currency', 'EUR')}</span>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <span class="font-medium">From:</span> {flight.get('from', 'N/A')}
-                            <br>
-                            <span class="font-medium">Departure:</span> {flight.get('departure_time', 'N/A')[:16].replace('T', ' ')}
-                        </div>
-                        <div>
-                            <span class="font-medium">To:</span> {flight.get('to', 'N/A')}
-                            <br>
-                            <span class="font-medium">Arrival:</span> {flight.get('arrival_time', 'N/A')[:16].replace('T', ' ')}
-                        </div>
-                    </div>
-                    <div class="mt-2 text-sm text-gray-600">
-                        <span class="font-medium">Duration:</span> {flight.get('duration', 'N/A')} | 
-                        <span class="font-medium">Stops:</span> {flight.get('stops', 0)}
-                    </div>
-                </div>
-                """
-            
-            html_content = f"""
-            <div class="p-6 bg-white border rounded-lg shadow-sm">
-                <h3 class="text-xl font-semibold text-gray-800 mb-4">Flight Options</h3>
-                <div class="mb-4 p-3 bg-blue-50 rounded">
-                    <div class="grid grid-cols-3 gap-4 text-sm">
-                        <div><span class="font-medium">From:</span> {result.get('origin', 'N/A')}</div>
-                        <div><span class="font-medium">To:</span> {result.get('destination', 'N/A')}</div>
-                        <div><span class="font-medium">Date:</span> {result.get('departure_date', 'N/A')}</div>
-                    </div>
-                </div>
-                <div class="space-y-3">
-                    {flights_html}
-                </div>
-                {f'<p class="text-sm text-gray-600 mt-4">Showing {min(5, len(flight_options))} of {len(flight_options)} available flights</p>' if len(flight_options) > 5 else ''}
-            </div>
-            """
-        
-        # Handle case where extraction was successful but no flights found
-        elif result.get("origin") and result.get("destination") and result.get("departure_date"):
-            origin = result["origin"]
-            destination = result["destination"]
-            date = result["departure_date"]
-            
-            if not html_content:
-                html_content = f"""
-                <div class="p-6 bg-blue-50 border border-blue-200 rounded-lg">
-                    <h3 class="text-lg font-semibold text-blue-700 mb-3">Flight Search Summary</h3>
-                    <div class="space-y-2 mb-4">
-                        <p><span class="font-medium">From:</span> {origin}</p>
-                        <p><span class="font-medium">To:</span> {destination}</p>
-                        <p><span class="font-medium">Date:</span> {date}</p>
-                    </div>
-                    <div class="bg-yellow-100 border border-yellow-300 rounded p-3">
-                        <p class="text-yellow-700">No flights found or search service temporarily unavailable.</p>
-                        <p class="text-sm text-yellow-600 mt-1">Please try again later or modify your search criteria.</p>
-                        <details class="mt-2">
-                            <summary class="text-xs cursor-pointer">Debug Info</summary>
-                            <pre class="text-xs mt-1 bg-yellow-50 p-2 rounded overflow-auto">
-Flight options count: {len(flight_options)}
-Available result keys: {', '.join(result.keys())}
-                            </pre>
-                        </details>
-                    </div>
-                </div>
-                """
-        
-        # Handle case where followup is needed
-        elif result.get("needs_followup") and result.get("followup_question"):
-            question = result["followup_question"]
-            html_content = f"""
-            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-blue-700 mb-2">More Information Needed</h3>
-                <p class="text-blue-600">{question}</p>
-            </div>
-            """
-        
-        # Final fallback
-        if not html_content:
-            print("DEBUG: No HTML content generated, using fallback")
-            html_content = f"""
-            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-yellow-700 mb-2">Processing Flight Inquiry</h3>
-                <p class="text-yellow-600 mb-2">Your request: "{user_message}"</p>
-                <p class="text-sm text-gray-600">The system processed your request but couldn't generate the display.</p>
-                <details class="mt-3">
-                    <summary class="text-xs text-gray-500 cursor-pointer">Debug Info</summary>
-                    <pre class="text-xs text-gray-400 mt-1 bg-gray-100 p-2 rounded overflow-auto">
-Available keys: {', '.join(result.keys())}
-Flight options: {len(flight_options)}
-                    </pre>
-                </details>
-            </div>
-            """
-        
-        print(f"DEBUG: Returning HTML content of length: {len(html_content)}")
-        return html_content
-
-    except Exception as e:
-        print(f"Error in flight inquiry endpoint: {e}")
-        traceback.print_exc()
-        return f"""
-        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
-            <p class="text-red-600 mb-2">An unexpected error occurred while processing your flight inquiry.</p>
-            <details class="mt-2">
-                <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
-                <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>
-            </details>
-            <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
-        </div>
-        """
-# main.py - FastAPI endpoint for cheapest date search
-from fastapi.responses import HTMLResponse
-from Nodes.cheapest_date_node import create_cheapest_date_graph
-from Nodes.get_access_token_node import get_access_token_node  # Import the existing node
-import traceback
-import logging
-import os
-
-# Initialize the graph
-cheapest_date_graph = create_cheapest_date_graph().compile()
-
-@app.post("/api/cheapest-date-search", response_class=HTMLResponse)
-async def cheapest_date_search_endpoint(request: ChatRequest):
-    """
-    Handle cheapest date flight searches - takes origin, destination, date range, and nonStop preference
-    Returns HTML for frontend display
-    """
-    try:
-        # Validate required fields
-        if not request.thread_id:
-            return """
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Error: thread_id is required</p>
-            </div>
-            """
-
-        user_message = request.user_msg.strip()
-        if not user_message:
-            return """
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Error: user_msg cannot be empty</p>
-            </div>
-            """
-
-        # Check API keys
-        required_keys = ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "OPENAI_API_KEY"]
-        missing_keys = [key for key in required_keys if not os.getenv(key)]
-        if missing_keys:
-            return f"""
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Missing API keys: {', '.join(missing_keys)}</p>
-            </div>
-            """
-
-        # Set up initial state for cheapest date search with dedicated fields
-        state = {
-            # Thread / conversation
-            "thread_id": request.thread_id,
-            "current_message": user_message,
-            "user_message": user_message,
-
-            # Cheapest date search specific fields
-            "cheapest_date_origin": None,
-            "cheapest_date_destination": None,
-            "cheapest_date_departure_range": None,
-            "cheapest_date_normalized_range": None,
-            "cheapest_date_non_stop": None,
-            "cheapest_date_results": [],
-            "cheapest_date_error": None,
-            "cheapest_date_html": None,
-            "needs_followup": True,
-            "followup_question": None,
-
-            # Access token will be added by get_access_token_node
-            "access_token": None
-        }
-
-        print(f"DEBUG: Initial state setup complete")
-        print(f"Processing cheapest date search: {user_message}")
-
-        # First get the access token
-        state = get_access_token_node(state)
-
-        if not state.get("access_token"):
-            return """
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-600">Error: Could not obtain Amadeus access token. Please check your API credentials.</p>
-            </div>
-            """
-
-        print(f"DEBUG: Successfully obtained access token")
-
-        # Execute the cheapest date search graph
-        result = cheapest_date_graph.invoke(state)
-
-        print(f"DEBUG: Graph execution complete")
-        print(f"DEBUG: Final result keys: {list(result.keys())}")
-
-        # Check for cheapest dates in result
-        cheapest_dates = result.get("cheapest_date_results", [])
-        print(f"DEBUG: cheapest_dates in result: {len(cheapest_dates)} results")
-        if cheapest_dates:
-            print(f"DEBUG: First cheapest date result: {cheapest_dates[0] if cheapest_dates else 'None'}")
-
-        # Check for HTML content in various possible keys
-        html_content = None
-        possible_html_keys = ["cheapest_date_html", "html_content", "formatted_html", "result_html"]
-
-        for key in possible_html_keys:
-            if key in result and result[key]:
-                html_content = result[key]
-                print(f"DEBUG: Found HTML content in key '{key}'")
-                break
-
-        # If no HTML found in expected keys, check all string values for HTML-like content
-        if not html_content:
-            print("DEBUG: No HTML content found in expected keys, checking all string values")
-            for key, value in result.items():
-                if isinstance(value, str) and ("<div" in value or "<html" in value or "class=" in value):
-                    html_content = value
-                    print(f"DEBUG: Found HTML-like content in key '{key}': {value[:100]}...")
-                    break
-
-        # Handle specific error cases
-        if result.get("cheapest_date_error"):
-            error_msg = result["cheapest_date_error"]
-            print(f"DEBUG: Search error detected: {error_msg}")
-            html_content = f"""
-            <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-red-700 mb-2">Cheapest Date Search Error</h3>
-                <p class="text-red-600 mb-2">We encountered an issue while searching for cheapest dates:</p>
-                <p class="text-sm text-red-500 bg-red-100 p-2 rounded">{error_msg}</p>
-                <p class="text-sm text-gray-600 mt-2">Please try again later or contact support if the problem persists.</p>
-            </div>
-            """
-
-        # Handle case where we have cheapest dates but no HTML was generated
-        elif cheapest_dates and not html_content:
-            print(f"DEBUG: Found {len(cheapest_dates)} cheapest dates but no HTML generated, creating manual HTML")
-
-            dates_html = ""
-            for i, date_option in enumerate(cheapest_dates[:10]):  # Show first 10 dates
-                dates_html += f"""
-                <div class="bg-white border rounded-lg p-4 mb-3 shadow-sm">
-                    <div class="flex justify-between items-start mb-2">
-                        <div class="flex-1">
-                            <span class="font-medium text-lg">{date_option.get('departure_date', 'N/A')}</span>
-                            <span class="text-sm text-gray-600 ml-2">({date_option.get('return_date', 'One way')})</span>
-                        </div>
-                        <div class="text-right">
-                            <span class="text-xl font-bold text-green-600">{date_option.get('price', {}).get('total', 'N/A')} {date_option.get('price', {}).get('currency', 'EUR')}</span>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <span class="font-medium">From:</span> {date_option.get('origin', 'N/A')}
-                            <br>
-                            <span class="font-medium">To:</span> {date_option.get('destination', 'N/A')}
-                        </div>
-                        <div>
-                            <span class="font-medium">Non-stop:</span> {'Yes' if result.get('cheapest_date_non_stop') else 'No'}
-                            <br>
-                            <span class="font-medium">Trip Type:</span> Round Trip
-                        </div>
-                    </div>
-                </div>
-                """
-
-            html_content = f"""
-            <div class="p-6 bg-white border rounded-lg shadow-sm">
-                <h3 class="text-xl font-semibold text-gray-800 mb-4">Cheapest Flight Dates</h3>
-                <div class="mb-4 p-3 bg-blue-50 rounded">
-                    <div class="grid grid-cols-3 gap-4 text-sm">
-                        <div><span class="font-medium">From:</span> {result.get('cheapest_date_origin', 'N/A')}</div>
-                        <div><span class="font-medium">To:</span> {result.get('cheapest_date_destination', 'N/A')}</div>
-                        <div><span class="font-medium">Date Range:</span> {result.get('cheapest_date_departure_range', 'N/A')}</div>
-                    </div>
-                </div>
-                <div class="space-y-3">
-                    {dates_html}
-                </div>
-                {f'<p class="text-sm text-gray-600 mt-4">Showing {min(10, len(cheapest_dates))} of {len(cheapest_dates)} available dates</p>' if len(cheapest_dates) > 10 else ''}
-            </div>
-            """
-
-        # Handle case where extraction was successful but no dates found
-        elif result.get("cheapest_date_origin") and result.get("cheapest_date_destination") and result.get("cheapest_date_departure_range"):
-            origin = result["cheapest_date_origin"]
-            destination = result["cheapest_date_destination"]
-            date_range = result["cheapest_date_departure_range"]
-
-            if not html_content:
-                html_content = f"""
-                <div class="p-6 bg-blue-50 border border-blue-200 rounded-lg">
-                    <h3 class="text-lg font-semibold text-blue-700 mb-3">Cheapest Date Search Summary</h3>
-                    <div class="space-y-2 mb-4">
-                        <p><span class="font-medium">From:</span> {origin}</p>
-                        <p><span class="font-medium">To:</span> {destination}</p>
-                        <p><span class="font-medium">Date Range:</span> {date_range}</p>
-                        <p><span class="font-medium">Non-stop preference:</span> {'Required' if result.get('cheapest_date_non_stop') else 'Flexible'}</p>
-                    </div>
-                    <div class="bg-yellow-100 border border-yellow-300 rounded p-3">
-                        <p class="text-yellow-700">No cheapest dates found or search service temporarily unavailable.</p>
-                        <p class="text-sm text-yellow-600 mt-1">Please try again later or modify your search criteria.</p>
-                        <details class="mt-2">
-                            <summary class="text-xs cursor-pointer">Debug Info</summary>
-                            <pre class="text-xs mt-1 bg-yellow-50 p-2 rounded overflow-auto">
-Cheapest dates count: {len(cheapest_dates)}
-Available result keys: {', '.join(result.keys())}
-                            </pre>
-                        </details>
-                    </div>
-                </div>
-                """
-
-        # Handle case where followup is needed
-        elif result.get("needs_followup") and result.get("followup_question"):
-            question = result["followup_question"]
-            html_content = f"""
-            <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-blue-700 mb-2">More Information Needed</h3>
-                <p class="text-blue-600">{question}</p>
-            </div>
-            """
-
-        # Final fallback
-        if not html_content:
-            print("DEBUG: No HTML content generated, using fallback")
-            html_content = f"""
-            <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <h3 class="text-lg font-semibold text-yellow-700 mb-2">Processing Cheapest Date Search</h3>
-                <p class="text-yellow-600 mb-2">Your request: "{user_message}"</p>
-                <p class="text-sm text-gray-600">The system processed your request but couldn't generate the display.</p>
-                <details class="mt-3">
-                    <summary class="text-xs text-gray-500 cursor-pointer">Debug Info</summary>
-                    <pre class="text-xs text-gray-400 mt-1 bg-gray-100 p-2 rounded overflow-auto">
-Available keys: {', '.join(result.keys())}
-Cheapest dates: {len(cheapest_dates)}
-                    </pre>
-                </details>
-            </div>
-            """
-
-        print(f"DEBUG: Returning HTML content of length: {len(html_content)}")
-        return html_content
-    except Exception as e:
-        print(f"Error in cheapest date search endpoint: {e}")
-        traceback.print_exc()
-        return f"""
-        <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <h3 class="text-lg font-semibold text-red-700 mb-2">System Error</h3>
-            <p class="text-red-600 mb-2">An unexpected error occurred while processing your cheapest date search.</p>
-            <details class="mt-2">
-                <summary class="text-sm text-red-500 cursor-pointer">Error Details</summary>
-                <pre class="text-xs text-red-400 mt-1 bg-red-100 p-2 rounded overflow-auto">{str(e)}</pre>
-            </details>
-            <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
-        </div>
-        """
     
 # Add this endpoint after your existing endpoints
 @app.post("/api/passports/upload", response_class=HTMLResponse)
@@ -1030,3 +598,106 @@ async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
             <p class="text-sm text-gray-600 mt-3">Please try again or contact support if the problem persists.</p>
         </div>
         """
+
+
+from Utils.visa_decoder import process_visa_file
+from fastapi.responses import JSONResponse
+
+
+# Add VISA_DIR to directory structure at the top of main.py
+VISA_DIR = UPLOAD_DIR / "visas"
+
+# Update the directory creation loop to include VISA_DIR
+for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR, VISA_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/visas/upload", response_class=JSONResponse)
+async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
+    """
+    Handle multiple visa uploads (PDF, image, or Word doc) and return structured JSON
+    with extracted visa information for each uploaded file.
+    """
+    try:
+        if not thread_id:
+            return JSONResponse(status_code=400, content={"error": "thread_id is required"})
+
+        if not files:
+            return JSONResponse(status_code=400, content={"error": "No visa files uploaded"})
+
+        conversation_store.add_message(thread_id, "user", f"Uploaded {len(files)} visa file(s)")
+        visas_data, saved_paths = [], []
+
+        for file in files:
+            try:
+                extension = file.filename.lower().split('.')[-1]
+                if extension not in ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'doc', 'docx']:
+                    visas_data.append({
+                        "filename": file.filename,
+                        "error": f"Unsupported file format: {extension}"
+                    })
+                    continue
+
+                filename = f"{uuid.uuid4()}_{file.filename}"
+                temp_file_path = VISA_DIR / filename
+
+                with open(temp_file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+
+                logging.info(f"Saved visa file: {temp_file_path}")
+                saved_paths.append(str(temp_file_path))
+
+                # 🔍 Extract visa info via the decoder
+                visa_info = process_visa_file(str(temp_file_path))
+                visa_info["filename"] = file.filename
+                visa_info["saved_path"] = str(temp_file_path)
+                visas_data.append(visa_info)
+
+                if "error" not in visa_info:
+                    logging.info(f"✅ Extracted visa info from {file.filename}")
+                else:
+                    logging.warning(f"⚠️ Failed to extract info from {file.filename}: {visa_info['error']}")
+
+            except Exception as e:
+                logging.error(f"Exception processing visa {file.filename}: {e}")
+                traceback.print_exc()
+                visas_data.append({
+                    "filename": file.filename,
+                    "error": f"Processing error: {str(e)}"
+                })
+
+        # 🧠 Save conversation state
+        state_to_save = {
+            "visas_uploaded": True,
+            "visas_data": visas_data,
+            "visa_file_paths": saved_paths
+        }
+        conversation_store.save_state(thread_id, state_to_save)
+
+        summary_msg = (
+            "Visa data extracted"
+            if any("error" not in v for v in visas_data)
+            else "Visa extraction completed with errors"
+        )
+        conversation_store.add_message(thread_id, "assistant", summary_msg)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "thread_id": thread_id,
+                "summary": summary_msg,
+                "visas_uploaded_count": len(files),
+                "visas_data": visas_data,
+            },
+        )
+
+    except Exception as e:
+        logging.error(f"Unexpected error in /api/visas/upload: {e}")
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "An unexpected error occurred while processing visa upload.",
+                "details": str(e),
+            },
+        )
