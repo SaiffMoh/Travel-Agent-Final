@@ -4,6 +4,7 @@ from Utils.intent_detection import detect_user_intent
 from Nodes.visa_rag_node import enhanced_get_country
 from Utils.watson_config import llm
 import os
+import re
 
 def should_proceed_to_search(state: TravelSearchState) -> str:
     """Check if we have enough info to proceed with travel search"""
@@ -43,17 +44,92 @@ def detect_visa_inquiry(state: TravelSearchState) -> tuple[bool, str | None]:
     
     return False, None
 
+
+def detect_booking_intent(state: TravelSearchState) -> tuple[bool, int | None]:
+    """
+    Detect if user wants to book a package or is responding to booking flow.
+    Returns: (is_booking, package_id)
+    """
+    user_message = state.get("current_message") or state.get("user_message", "")
+    message_lower = user_message.lower()
+    
+    # Check if already in booking flow
+    booking_in_progress = state.get("booking_in_progress", False)
+    
+    # Booking keywords
+    booking_keywords = ["book", "booking", "reserve", "confirm", "i want package", "select package"]
+    
+    # Check for explicit booking request
+    has_booking_keyword = any(keyword in message_lower for keyword in booking_keywords)
+    
+    # Extract package number
+    package_id = None
+    
+    # Pattern 1: "book package 2", "package 2", "I want package 1"
+    match = re.search(r'package\s*(\d+)', message_lower)
+    if match:
+        package_id = int(match.group(1))
+    
+    # Pattern 2: Just a number if in booking context
+    elif booking_in_progress:
+        match = re.search(r'\b(\d+)\b', message_lower)
+        if match:
+            potential_id = int(match.group(1))
+            # Only accept if it's a reasonable package ID (1-10)
+            if 1 <= potential_id <= 10:
+                package_id = potential_id
+    
+    # Determine if this is a booking intent
+    is_booking = has_booking_keyword or (booking_in_progress and package_id is not None)
+    
+    return is_booking, package_id
+
+
+def detect_document_upload_completion(state: TravelSearchState) -> bool:
+    """
+    Check if user just completed uploading documents while in booking flow.
+    This helps auto-route back to booking after uploads.
+    """
+    booking_in_progress = state.get("booking_in_progress", False)
+    
+    if not booking_in_progress:
+        return False
+    
+    # Check if documents were recently uploaded
+    passport_uploaded = state.get("passport_uploaded", False)
+    visa_uploaded = state.get("visa_uploaded", False)
+    
+    # If we're in booking flow and both documents are now uploaded, 
+    # we should return to booking
+    return passport_uploaded and visa_uploaded
+
+
 def smart_router(state: TravelSearchState) -> str:
     """
-    Enhanced smart routing with visa RAG check for all flows.
+    Enhanced smart routing with booking flow support.
     Priority order:
-    1. Visa inquiries (highest priority - can be asked anytime)
-    2. Invoice extraction
-    3. Travel search
-    4. General conversation
+    1. Document upload completion (if in booking flow) - route back to booking
+    2. Booking requests (explicit or in-progress)
+    3. Visa inquiries (can interrupt any flow)
+    4. Invoice extraction
+    5. Travel search
+    6. General conversation
     """
     
-    # FIRST: Check for visa inquiry (can interrupt any flow)
+    # FIRST: Check if we just completed document uploads during booking
+    if detect_document_upload_completion(state):
+        print("Router: Document upload completed during booking - returning to booking verification")
+        return "booking"
+    
+    # SECOND: Check for booking intent
+    is_booking, package_id = detect_booking_intent(state)
+    if is_booking:
+        print(f"Router: Booking intent detected - Package ID: {package_id}")
+        if package_id:
+            state["selected_package_id"] = package_id
+        return "booking"
+    
+    # THIRD: Check for visa inquiry (can interrupt any flow)
     is_visa_inquiry, detected_country = detect_visa_inquiry(state)
     if is_visa_inquiry:
         if detected_country:
@@ -63,7 +139,7 @@ def smart_router(state: TravelSearchState) -> str:
             print("Router: Visa inquiry detected without clear country - routing to visa_rag for country selection")
         return "visa_rag"
     
-    # SECOND: Check primary intent
+    # FOURTH: Check primary intent
     intent = detect_user_intent(state)
     print(f"Router: Detected primary intent - {intent}")
     

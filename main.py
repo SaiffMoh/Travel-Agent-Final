@@ -233,25 +233,36 @@ async def chat_endpoint(request: ChatRequest):
 
             # Use the previous_state already retrieved at the start
             state = {
-                "thread_id": request.thread_id,
-                "conversation": updated_conversation,
-                "current_message": user_message,
-                "user_message": user_message,
-                "needs_followup": True,
-                "info_complete": False,
-                "trip_type": "round trip",
-                "node_trace": [],
-                "followup_question": None,
-                "current_node": "llm_conversation",
-                "followup_count": previous_state.get("followup_count", 0),
-                "request_type": previous_state.get("request_type", "flights"),
-                "travel_search_completed": previous_state.get("travel_search_completed", False),
-                "visa_info_html": None,
-                "invoice_uploaded": previous_state.get("invoice_uploaded", False),
-                "invoice_pdf_path": previous_state.get("invoice_pdf_path"),
-                "extracted_invoice_data": previous_state.get("extracted_invoice_data"),
-                "invoice_html": previous_state.get("invoice_html")
-            }
+            "thread_id": request.thread_id,
+            "conversation": updated_conversation,
+            "current_message": user_message,
+            "user_message": user_message,
+            "needs_followup": True,
+            "info_complete": False,
+            "trip_type": "round trip",
+            "node_trace": [],
+            "followup_question": None,
+            "current_node": "llm_conversation",
+            "followup_count": previous_state.get("followup_count", 0),
+            "request_type": previous_state.get("request_type", "flights"),
+            "travel_search_completed": previous_state.get("travel_search_completed", False),
+            "visa_info_html": None,
+            
+            # BOOKING-RELATED STATE (CRITICAL!)
+            "travel_packages": previous_state.get("travel_packages", []),
+            "passport_uploaded": previous_state.get("passport_uploaded", False),
+            "passport_data": previous_state.get("passport_data", []),
+            "visa_uploaded": previous_state.get("visa_uploaded", False),
+            "visa_data": previous_state.get("visa_data", []),
+            "booking_in_progress": previous_state.get("booking_in_progress", False),
+            "selected_package_id": previous_state.get("selected_package_id"),
+            
+            # INVOICE STATE
+            "invoice_uploaded": previous_state.get("invoice_uploaded", False),
+            "invoice_pdf_path": previous_state.get("invoice_pdf_path"),
+            "extracted_invoice_data": previous_state.get("extracted_invoice_data"),
+            "invoice_html": previous_state.get("invoice_html")
+        }
             
             travel_fields = ["departure_date", "origin", "destination", "cabin_class", "duration", "travel_packages_html"]
             for field in travel_fields:
@@ -286,20 +297,33 @@ async def chat_endpoint(request: ChatRequest):
                 print("(debug) unable to print result keys")
 
             state_to_save = {
-                "departure_date": result.get("departure_date"),
-                "origin": result.get("origin"),
-                "destination": result.get("destination"),
-                "cabin_class": result.get("cabin_class"),
-                "duration": result.get("duration"),
-                "followup_count": result.get("followup_count", 0),
-                "request_type": result.get("request_type", "flights"),
-                "travel_search_completed": result.get("travel_search_completed", False),
-                "travel_packages_html": result.get("travel_packages_html"),
-                "invoice_uploaded": result.get("invoice_uploaded", False),
-                "invoice_pdf_path": result.get("invoice_pdf_path"),
-                "extracted_invoice_data": result.get("extracted_invoice_data"),
-                "invoice_html": result.get("invoice_html")
-            }
+            "departure_date": result.get("departure_date"),
+            "origin": result.get("origin"),
+            "destination": result.get("destination"),
+            "cabin_class": result.get("cabin_class"),
+            "duration": result.get("duration"),
+            "followup_count": result.get("followup_count", 0),
+            "request_type": result.get("request_type", "flights"),
+            "travel_search_completed": result.get("travel_search_completed", False),
+            
+            # TRAVEL PACKAGES
+            "travel_packages_html": result.get("travel_packages_html"),
+            "travel_packages": result.get("travel_packages", []),
+            
+            # BOOKING STATE (preserve from result if available, else from previous_state)
+            "passport_uploaded": result.get("passport_uploaded", previous_state.get("passport_uploaded", False)),
+            "passport_data": result.get("passport_data", previous_state.get("passport_data", [])),
+            "visa_uploaded": result.get("visa_uploaded", previous_state.get("visa_uploaded", False)),
+            "visa_data": result.get("visa_data", previous_state.get("visa_data", [])),
+            "booking_in_progress": result.get("booking_in_progress", previous_state.get("booking_in_progress", False)),
+            "selected_package_id": result.get("selected_package_id", previous_state.get("selected_package_id")),
+            
+            # INVOICE STATE
+            "invoice_uploaded": result.get("invoice_uploaded", False),
+            "invoice_pdf_path": result.get("invoice_pdf_path"),
+            "extracted_invoice_data": result.get("extracted_invoice_data"),
+            "invoice_html": result.get("invoice_html")
+        }
             conversation_store.save_state(request.thread_id, state_to_save)
 
             extracted_info = ExtractedInfo(
@@ -326,11 +350,18 @@ async def chat_endpoint(request: ChatRequest):
             if result.get("travel_packages_html"):
                 print(f"✓ Returning {len(result['travel_packages_html'])} travel packages (HTML)")
                 state_to_save["travel_search_completed"] = True
+                state_to_save["travel_packages"] = result.get("travel_packages", [])  
                 conversation_store.save_state(request.thread_id, state_to_save)
                 assistant_message = "Here are your travel packages:"
                 conversation_store.add_message(request.thread_id, "assistant", assistant_message)
                 return result["travel_packages_html"]
 
+            if result.get("booking_html"):
+                print("✓ Returning booking_html from Amadeus flow")
+                booking_status = "Booking confirmed" if result.get("booking_confirmed") else "Booking in progress"
+                conversation_store.add_message(request.thread_id, "assistant", booking_status)
+                return result["booking_html"]
+            
             flights = []
             if result.get("formatted_results"):
                 flights = [
@@ -571,13 +602,16 @@ async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
 
         # Save state to conversation store so frontend can reference later
         state_to_save = {
-            "passports_uploaded": True,
-            "passports_data": passports_data,
+            "passport_uploaded": True,  # Set flag
+            "passport_data": passports_data,  # Save extracted data
             "passport_html": html_content,
             "passport_file_paths": saved_paths
         }
         conversation_store.save_state(thread_id, state_to_save)
-
+        # If user is in booking flow, automatically trigger booking verification
+        current_state = conversation_store.get_state(thread_id) or {}
+        if current_state.get("booking_in_progress"):
+            logger.info("📦 User in booking flow - will auto-verify on next message")
         # Add assistant message summarizing result
         summary_msg = "Passport data extracted" if any("error" not in p for p in passports_data) else "Passport extraction completed with errors"
         conversation_store.add_message(thread_id, "assistant", summary_msg)
@@ -600,7 +634,7 @@ async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
         """
 
 
-from Utils.visa_decoder import process_visa_file
+from Utils.visa_decoder import process_visa_file,generate_visa_html
 from fastapi.responses import JSONResponse
 
 
@@ -612,18 +646,16 @@ for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR, VISA_DI
     directory.mkdir(parents=True, exist_ok=True)
 
 
-@app.post("/api/visas/upload", response_class=JSONResponse)
+@app.post("/api/visas/upload", response_class=HTMLResponse)
 async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
     """
-    Handle multiple visa uploads (PDF, image, or Word doc) and return structured JSON
-    with extracted visa information for each uploaded file.
+    Handle multiple visa uploads (PDF, image, or Word doc) and return clean HTML for display.
     """
     try:
         if not thread_id:
-            return JSONResponse(status_code=400, content={"error": "thread_id is required"})
-
+            raise HTTPException(status_code=400, detail="thread_id is required")
         if not files:
-            return JSONResponse(status_code=400, content={"error": "No visa files uploaded"})
+            raise HTTPException(status_code=400, detail="No visa files uploaded")
 
         conversation_store.add_message(thread_id, "user", f"Uploaded {len(files)} visa file(s)")
         visas_data, saved_paths = [], []
@@ -640,18 +672,39 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
 
                 filename = f"{uuid.uuid4()}_{file.filename}"
                 temp_file_path = VISA_DIR / filename
-
                 with open(temp_file_path, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
-
                 logging.info(f"Saved visa file: {temp_file_path}")
                 saved_paths.append(str(temp_file_path))
 
-                # 🔍 Extract visa info via the decoder
                 visa_info = process_visa_file(str(temp_file_path))
-                visa_info["filename"] = file.filename
-                visa_info["saved_path"] = str(temp_file_path)
-                visas_data.append(visa_info)
+
+                essential_fields = {
+                    "filename": file.filename,
+                    "saved_path": str(temp_file_path),
+                    "visa_type": visa_info.get("visa_type"),
+                    "visa_number": visa_info.get("visa_number"),
+                    "country": visa_info.get("country"),
+                    "full_name": visa_info.get("full_name"),
+                    "nationality": visa_info.get("nationality"),
+                    "passport_number": visa_info.get("passport_number"),
+                    "date_of_birth": visa_info.get("date_of_birth"),
+                    "date_of_issue": visa_info.get("date_of_issue"),
+                    "date_of_expiry": visa_info.get("date_of_expiry"),
+                    "place_of_birth": visa_info.get("place_of_birth"),
+                    "place_of_issue": visa_info.get("place_of_issue"),
+                    "profession": visa_info.get("profession"),
+                    "uid_number": visa_info.get("uid_number"),
+                    "host_name": visa_info.get("host_name"),
+                    "host_address": visa_info.get("host_address"),
+                    "validation_warnings": visa_info.get("validation_warnings", []),
+                    "extraction_confidence": visa_info.get("extraction_confidence"),
+                }
+
+                if "error" in visa_info:
+                    essential_fields["error"] = visa_info["error"]
+
+                visas_data.append(essential_fields)
 
                 if "error" not in visa_info:
                     logging.info(f"✅ Extracted visa info from {file.filename}")
@@ -666,38 +719,24 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
                     "error": f"Processing error: {str(e)}"
                 })
 
-        # 🧠 Save conversation state
+        # CHANGE: Save with proper flags
         state_to_save = {
-            "visas_uploaded": True,
-            "visas_data": visas_data,
+            "visa_uploaded": True,  # Set flag
+            "visa_data": visas_data,  # Save extracted data
             "visa_file_paths": saved_paths
         }
         conversation_store.save_state(thread_id, state_to_save)
+        # If user is in booking flow, automatically trigger booking verification
+        current_state = conversation_store.get_state(thread_id) or {}
+        if current_state.get("booking_in_progress"):
+            logger.info("📦 User in booking flow - will auto-verify on next message")
+        # Generate HTML summary
+        html_summary = generate_visa_html(visas_data)
 
-        summary_msg = (
-            "Visa data extracted"
-            if any("error" not in v for v in visas_data)
-            else "Visa extraction completed with errors"
-        )
-        conversation_store.add_message(thread_id, "assistant", summary_msg)
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "thread_id": thread_id,
-                "summary": summary_msg,
-                "visas_uploaded_count": len(files),
-                "visas_data": visas_data,
-            },
-        )
+        # Return only the clean HTML
+        return HTMLResponse(content=html_summary, status_code=200)
 
     except Exception as e:
         logging.error(f"Unexpected error in /api/visas/upload: {e}")
         traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "An unexpected error occurred while processing visa upload.",
-                "details": str(e),
-            },
-        )
+        return HTMLResponse(content=f"<div>An unexpected error occurred: {str(e)}</div>", status_code=500)

@@ -1,7 +1,8 @@
 """
-Dynamic Graph Configuration with Universal Visa RAG Support
+Dynamic Graph Configuration with Booking Flow
 Routes to fallback nodes when USE_FALLBACK=true, otherwise uses original nodes
-Visa RAG is now accessible from all conversation flows
+Visa RAG is accessible from all conversation flows
+Booking node handles package selection and document verification
 """
 
 from langgraph.graph import StateGraph, END
@@ -29,6 +30,7 @@ from Nodes.toHTML import toHTML
 from Nodes.visa_rag_node import visa_rag_node
 from Nodes.general_conversation_node import general_conversation_node
 from Nodes.invoice_extraction_node import invoice_extraction_node
+from Nodes.booking_node import booking_node  # NEW
 
 # Conditionally import nodes based on USE_FALLBACK
 if USE_FALLBACK:
@@ -47,13 +49,16 @@ else:
 
 def create_travel_graph():
     """
-    Create the travel agent graph with dynamic node routing and universal visa RAG support.
-    Visa RAG is now checked FIRST in the main.py endpoint, but can also be triggered
-    from within the graph flows if needed.
+    Create the travel agent graph with booking flow support.
+    
+    Flow additions:
+    - Booking node accessible from main router
+    - Booking verifies passport and visa uploads
+    - Can route back to booking after document uploads
     """
     graph = StateGraph(TravelSearchState)
 
-    # Add all nodes (common nodes that don't change)
+    # Add all nodes
     graph.add_node("llm_conversation", llm_conversation_node)
     graph.add_node("general_conversation", general_conversation_node)
     graph.add_node("analyze_conversation", analyze_conversation_node)
@@ -66,6 +71,7 @@ def create_travel_graph():
     graph.add_node("to_html", toHTML)
     graph.add_node("visa_rag", visa_rag_node)
     graph.add_node("invoice_extraction", invoice_extraction_node)
+    graph.add_node("booking", booking_node)  # NEW
     
     # Add the dynamically selected nodes
     graph.add_node("get_flight_offers", get_flight_offers_node)
@@ -75,7 +81,7 @@ def create_travel_graph():
     # Entry point and main routing
     graph.set_entry_point("llm_conversation")
     
-    # Main router with visa RAG as a possible destination
+    # Main router with booking as a new destination
     graph.add_conditional_edges(
         "llm_conversation",
         smart_router,
@@ -84,6 +90,7 @@ def create_travel_graph():
             "visa_rag": "visa_rag",
             "general_conversation": "general_conversation",
             "invoice_extraction": "invoice_extraction",
+            "booking": "booking",  # NEW
             "need_more_info": END
         }
     )
@@ -92,8 +99,9 @@ def create_travel_graph():
     graph.add_edge("visa_rag", END)
     graph.add_edge("general_conversation", END)
     graph.add_edge("invoice_extraction", END)
+    graph.add_edge("booking", END)  # NEW - Booking ends here
     
-    # Travel flow
+    # Travel flow (unchanged)
     graph.add_conditional_edges(
         "analyze_conversation",
         check_info_complete,
@@ -122,6 +130,7 @@ def create_travel_graph():
     mode = "FALLBACK (with database)" if USE_FALLBACK else "ORIGINAL (API-only)"
     print(f"✅ Travel graph created in {mode} mode")
     print(f"🔍 Visa RAG is universally accessible across all flows")
+    print(f"📦 Booking flow integrated with document verification")
     
     return graph
 
@@ -132,54 +141,9 @@ def get_graph_mode():
         "use_fallback": USE_FALLBACK,
         "mode": "fallback" if USE_FALLBACK else "original",
         "description": "Database fallback enabled" if USE_FALLBACK else "API-only mode",
-        "visa_rag_enabled": True
+        "visa_rag_enabled": True,
+        "booking_flow_enabled": True  # NEW
     }
-
-
-def verify_fallback_setup():
-    """Verify that fallback system is properly configured"""
-    if not USE_FALLBACK:
-        return {
-            "status": "disabled",
-            "message": "Fallback mode is disabled. Using original API-only nodes."
-        }
-    
-    try:
-        from database_fallback import DatabaseFallbackService
-        import os.path
-        
-        db_exists = os.path.exists("travel_data.db")
-        
-        if not db_exists:
-            return {
-                "status": "warning",
-                "message": "Fallback enabled but database not found. Will generate dummy data if API fails.",
-                "database_found": False
-            }
-        
-        try:
-            db = DatabaseFallbackService()
-            stats = db.get_database_stats()
-            
-            return {
-                "status": "ready",
-                "message": "Fallback system fully operational",
-                "database_found": True,
-                "stats": stats
-            }
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"Database found but error reading: {str(e)}",
-                "database_found": True
-            }
-    
-    except ImportError:
-        return {
-            "status": "error",
-            "message": "Fallback nodes enabled but database_fallback.py not found",
-            "database_found": False
-        }
 
 
 if __name__ == "__main__":
@@ -192,28 +156,7 @@ if __name__ == "__main__":
     print(f"USE_FALLBACK: {mode_info['use_fallback']}")
     print(f"Description: {mode_info['description']}")
     print(f"Visa RAG Universal Access: {mode_info['visa_rag_enabled']}")
-    
-    if USE_FALLBACK:
-        print("\n" + "-"*60)
-        print("FALLBACK SYSTEM CHECK")
-        print("-"*60)
-        
-        verification = verify_fallback_setup()
-        print(f"\nStatus: {verification['status'].upper()}")
-        print(f"Message: {verification['message']}")
-        
-        if verification.get('database_found'):
-            print("Database: ✅ Found")
-            
-            if 'stats' in verification:
-                stats = verification['stats']
-                print(f"\nDatabase Statistics:")
-                print(f"  • Total flights: {stats.get('total_flights', 0)}")
-                print(f"  • Unique routes: {stats.get('unique_routes', 0)}")
-                print(f"  • Hotel searches: {stats.get('total_hotel_searches', 0)}")
-                print(f"  • Cities with hotels: {stats.get('cities_with_hotels', 0)}")
-        else:
-            print("Database: ❌ Not found")
+    print(f"Booking Flow: {mode_info['booking_flow_enabled']}")
     
     print("\n" + "="*60)
     print("Creating graph...")
