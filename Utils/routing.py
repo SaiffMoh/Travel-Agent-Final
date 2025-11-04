@@ -7,7 +7,7 @@ import os
 import re
 
 def should_proceed_to_search(state: TravelSearchState) -> str:
-    """Check if we have enough info to proceed with travel search"""
+    """Check if we have enough info to proceed with travel search based on request_type"""
     has_origin = state.get("origin") is not None
     has_destination = state.get("destination") is not None  
     has_departure_date = state.get("departure_date") is not None
@@ -15,13 +15,45 @@ def should_proceed_to_search(state: TravelSearchState) -> str:
     has_cabin_class = state.get("cabin_class") is not None
     
     info_complete = state.get("info_complete", False)
+    request_type = state.get("request_type", "packages")
+    trip_type = state.get("trip_type", "round_trip")
     
-    print(f"Info check - Origin: {has_origin}, Destination: {has_destination}, Date: {has_departure_date}, Duration: {has_duration}, Cabin: {has_cabin_class}, LLM says complete: {info_complete}")
+    print(f"Info check - Origin: {has_origin}, Destination: {has_destination}, "
+          f"Date: {has_departure_date}, Duration: {has_duration}, "
+          f"Cabin: {has_cabin_class}, LLM says complete: {info_complete}")
+    print(f"Request type: {request_type}, Trip type: {trip_type}")
     
-    if has_origin and has_destination and has_departure_date and has_duration and has_cabin_class and info_complete:
-        return "search_ready"
-    else:
-        return "need_more_info"
+    # HOTELS-ONLY: Don't need cabin_class
+    if request_type == "hotels":
+        if has_origin and has_destination and has_departure_date and has_duration and info_complete:
+            print("✓ Hotels-only request ready - all required fields present")
+            return "search_ready"
+        else:
+            print("✗ Hotels-only request incomplete")
+            return "need_more_info"
+    
+    # ONE-WAY FLIGHTS/PACKAGES: Don't need duration
+    if request_type in ["flights", "packages"] and trip_type == "one_way":
+        if has_origin and has_destination and has_departure_date and has_cabin_class and info_complete:
+            print("✓ One-way request ready - all required fields present")
+            return "search_ready"
+        else:
+            print("✗ One-way request incomplete")
+            return "need_more_info"
+    
+    # ROUND TRIP FLIGHTS/PACKAGES: Need all fields
+    if request_type in ["flights", "packages"] and trip_type == "round_trip":
+        if has_origin and has_destination and has_departure_date and has_duration and has_cabin_class and info_complete:
+            print("✓ Round trip request ready - all required fields present")
+            return "search_ready"
+        else:
+            print("✗ Round trip request incomplete")
+            return "need_more_info"
+    
+    # Fallback
+    print("✗ Request doesn't match any completion criteria")
+    return "need_more_info"
+
 
 def detect_visa_inquiry(state: TravelSearchState) -> tuple[bool, str | None]:
     """
@@ -123,13 +155,13 @@ def detect_document_upload_completion(state: TravelSearchState) -> bool:
 
 def smart_router(state: TravelSearchState) -> str:
     """
-    Enhanced smart routing with booking flow support.
+    Enhanced smart routing with booking flow support and hotels-only logic.
     Priority order:
     1. Booking requests (explicit package selection has HIGHEST priority)
     2. Document upload completion (if in booking flow) - route back to booking
     3. Visa inquiries (can interrupt any flow)
     4. Invoice extraction
-    5. Travel search
+    5. Travel search (handles hotels-only, one-way, round trip)
     6. General conversation
     
     NOTE: This router only returns routing decisions.
@@ -141,12 +173,9 @@ def smart_router(state: TravelSearchState) -> str:
     is_booking, package_id = detect_booking_intent(state)
     if is_booking:
         print(f"Router: Booking intent detected - Package ID: {package_id}")
-        # Note: selected_package_id should be set in main.py before graph invocation
-        # Router functions cannot modify state in LangGraph
         return "booking"
     
     # SECOND: Check if we just completed document uploads during booking
-    # (This now only triggers on actual uploads, not text messages)
     if detect_document_upload_completion(state):
         print("Router: Document upload completed during booking - returning to booking verification")
         return "booking"

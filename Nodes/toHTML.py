@@ -41,6 +41,11 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             box-shadow: 0 2px 8px rgba(40, 167, 69, 0.2);
         }
         
+        .package-container.hotels-only {
+            border: 2px solid #17a2b8;
+            box-shadow: 0 2px 8px rgba(23, 162, 184, 0.2);
+        }
+        
         /* Native details/summary styling */
         .package-details {
             border: none;
@@ -75,6 +80,11 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             border-bottom: 1px solid rgba(40, 167, 69, 0.2);
         }
         
+        .package-container.hotels-only .package-header {
+            background: rgba(23, 162, 184, 0.08);
+            border-bottom: 1px solid rgba(23, 162, 184, 0.2);
+        }
+        
         .package-header-left {
             flex: 1;
         }
@@ -95,6 +105,15 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             display: inline-flex;
             align-items: center;
             gap: 4px;
+        }
+        
+        .hotels-only-badge {
+            background: #17a2b8;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
         }
         
         .savings-badge {
@@ -217,6 +236,16 @@ def generate_complete_html(packages: List[dict], summary: str) -> str:
             font-size: 0.9em;
         }
         
+        .info-note {
+            background: rgba(23, 162, 184, 0.1);
+            border: 1px solid rgba(23, 162, 184, 0.3);
+            color: #0c5460;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            font-size: 0.9em;
+        }
+        
         .price-cell {
             font-weight: 600;
             color: #007bff;
@@ -292,11 +321,13 @@ def generate_package_html(package: dict, package_num: int) -> str:
     """Generate HTML for a single collapsible travel package using native HTML details/summary."""
     package_id = package.get("package_id", package_num)
     travel_dates = package.get("travel_dates", {})
-    flight_offer = package.get("flight_offer", {})  # Changed from flight_offers to flight_offer
+    flight_offer = package.get("flight_offer")  # Can be None for hotels-only
     hotel_info = package.get("hotels", {})
     pricing = package.get("pricing", {})
     is_optimal = package.get("is_optimal", False)
     savings_vs_optimal = package.get("savings_vs_optimal")
+    request_type = package.get("request_type", "packages")
+    trip_type = package.get("trip_type", "round_trip")
     
     duration = travel_dates.get("duration_nights", "N/A")
     checkin = travel_dates.get("checkin", "N/A")
@@ -308,19 +339,27 @@ def generate_package_html(package: dict, package_num: int) -> str:
     hotel_currency = hotel_info.get("currency", "N/A")
     available_hotels = hotel_info.get("available_count", 0)
     
-    # Get flight summary from single flight offer
+    # Determine if this is hotels-only
+    is_hotels_only = (request_type == "hotels" or flight_offer is None)
+    
+    # Get flight summary from single flight offer (if exists)
     flight_summary = ""
-    if flight_offer:
+    if flight_offer and not is_hotels_only:
         summary = flight_offer.get("summary", {})
         outbound = summary.get("outbound", {})
         outbound_stops = outbound.get("stops", 0)
         stops_text = "Direct" if outbound_stops == 0 else f"{outbound_stops} stop{'s' if outbound_stops > 1 else ''}"
-        flight_summary = f"{stops_text}"
+        
+        # Add trip type indicator
+        trip_label = "One-way" if trip_type == "one_way" else "Round trip"
+        flight_summary = f"{stops_text} • {trip_label}"
 
     # Container classes
     container_classes = "package-container"
     if is_optimal:
         container_classes += " optimal"
+    if is_hotels_only:
+        container_classes += " hotels-only"
 
     # Use 'open' attribute only for optimal package
     details_open = ' open' if is_optimal else ''
@@ -336,10 +375,19 @@ def generate_package_html(package: dict, package_num: int) -> str:
                             <span class="summary-label">Dates</span>
                             <span class="summary-value">{checkin} to {checkout}</span>
                         </div>
+    """]
+
+    # Conditional flight section (only show if not hotels-only)
+    if not is_hotels_only:
+        html_parts.append(f"""
                         <div class="summary-item">
                             <span class="summary-label">Flight</span>
                             <span class="summary-value">{flight_price:,.2f} {flight_currency} • {flight_summary}</span>
                         </div>
+        """)
+
+    # Hotels section (always show)
+    html_parts.append(f"""
                         <div class="summary-item">
                             <span class="summary-label">Hotels</span>
                             <span class="summary-value">{available_hotels} available from {hotel_price:,.2f} {hotel_currency}</span>
@@ -347,10 +395,14 @@ def generate_package_html(package: dict, package_num: int) -> str:
                     </div>
                 </div>
                 <div class="package-header-right">
-    """]
+    """)
 
-    # Add optimal badge
-    if is_optimal:
+    # Add badges
+    if is_hotels_only:
+        html_parts.append("""
+                    <span class="hotels-only-badge">🏨 Hotels Only</span>
+        """)
+    elif is_optimal:
         html_parts.append("""
                     <span class="optimal-badge">⭐ Best Value</span>
         """)
@@ -370,14 +422,18 @@ def generate_package_html(package: dict, package_num: int) -> str:
     """)
 
     # Add detailed package content
-    html_parts.append(generate_package_info_table(travel_dates, pricing))
+    html_parts.append(generate_package_info_table(travel_dates, pricing, request_type))
     
-    # Add savings comparison if not optimal
-    if not is_optimal and savings_vs_optimal:
+    # Add savings comparison if not optimal and not hotels-only
+    if not is_optimal and not is_hotels_only and savings_vs_optimal:
         html_parts.append(generate_savings_comparison(savings_vs_optimal))
     
-    html_parts.append(generate_pricing_table(pricing))
-    html_parts.append(generate_flight_details_section(flight_offer))  # Changed function call
+    html_parts.append(generate_pricing_table(pricing, request_type, trip_type, is_hotels_only))
+    
+    # Only show flight details if not hotels-only
+    if not is_hotels_only:
+        html_parts.append(generate_flight_details_section(flight_offer, trip_type))
+    
     html_parts.append(generate_hotel_table(hotel_info))
 
     html_parts.append("""
@@ -408,8 +464,17 @@ def generate_savings_comparison(savings_vs_optimal: dict) -> str:
     </div>
     """
 
-def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
+def generate_package_info_table(travel_dates: dict, pricing: dict, request_type: str = "packages") -> str:
     """Generate basic package information table."""
+    
+    flight_currency_row = ""
+    if request_type != "hotels":
+        flight_currency_row = f"""
+            <tr>
+                <td class="info-label">Flight Currency</td>
+                <td class="info-value">{pricing.get('flight_currency', 'N/A')}</td>
+            </tr>
+        """
     
     return f"""
     <h4 class="section-title">📅 Package Overview</h4>
@@ -427,10 +492,7 @@ def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
                 <td class="info-label">Duration</td>
                 <td class="info-value">{travel_dates.get('duration_nights', 'N/A')} nights</td>
             </tr>
-            <tr>
-                <td class="info-label">Flight Currency</td>
-                <td class="info-value">{pricing.get('flight_currency', 'N/A')}</td>
-            </tr>
+            {flight_currency_row}
             <tr>
                 <td class="info-label">Hotel Currency</td>
                 <td class="info-value">{pricing.get('hotel_currency', 'N/A')}</td>
@@ -439,18 +501,31 @@ def generate_package_info_table(travel_dates: dict, pricing: dict) -> str:
     </table>
     """
 
-def generate_pricing_table(pricing: dict) -> str:
+def generate_pricing_table(pricing: dict, request_type: str = "packages", 
+                           trip_type: str = "round_trip", is_hotels_only: bool = False) -> str:
     """Generate pricing summary table with separate currencies."""
     flight_price = pricing.get("flight_price", 0)
     flight_currency = pricing.get("flight_currency", "")
     hotel_price = pricing.get("min_hotel_price", 0)
     hotel_currency = pricing.get("hotel_currency", "N/A")
 
-    return f"""
-    <h4 class="section-title">💰 Pricing Summary</h4>
-    <div class="currency-note">
-        ⚠️ Note: Flight and hotel prices are in different currencies and cannot be combined directly.
-    </div>
+    html_parts = ['<h4 class="section-title">💰 Pricing Summary</h4>']
+
+    # Show appropriate notice based on package type
+    if is_hotels_only:
+        html_parts.append("""
+        <div class="info-note">
+            ℹ️ This is a hotels-only package. Flight prices are not included.
+        </div>
+        """)
+    else:
+        html_parts.append("""
+        <div class="currency-note">
+            ⚠️ Note: Flight and hotel prices are in different currencies and cannot be combined directly.
+        </div>
+        """)
+
+    html_parts.append("""
     <table class="data-table pricing-table">
         <thead>
             <tr>
@@ -461,12 +536,22 @@ def generate_pricing_table(pricing: dict) -> str:
             </tr>
         </thead>
         <tbody>
+    """)
+
+    # Flight row (conditional)
+    if not is_hotels_only:
+        trip_label = "One Way" if trip_type == "one_way" else "Round Trip"
+        html_parts.append(f"""
             <tr class="flight-price-row">
-                <td class="component-cell"><strong>Flight (Round Trip)</strong></td>
+                <td class="component-cell"><strong>Flight ({trip_label})</strong></td>
                 <td class="price-cell">{flight_price:,.2f}</td>
                 <td class="currency-cell">{flight_currency}</td>
-                <td class="notes-cell">Complete round trip airfare</td>
+                <td class="notes-cell">Complete {trip_label.lower()} airfare</td>
             </tr>
+        """)
+
+    # Hotel row (always show)
+    html_parts.append(f"""
             <tr class="hotel-price-row">
                 <td class="component-cell"><strong>Hotel (Starting from)</strong></td>
                 <td class="price-cell">{hotel_price:,.2f}</td>
@@ -475,9 +560,11 @@ def generate_pricing_table(pricing: dict) -> str:
             </tr>
         </tbody>
     </table>
-    """
+    """)
 
-def generate_flight_details_section(flight_offer: dict) -> str:
+    return "".join(html_parts)
+
+def generate_flight_details_section(flight_offer: dict, trip_type: str = "round_trip") -> str:
     """Generate section for single flight offer with enhanced details."""
     html_parts = [f'<h4 class="section-title">✈️ Flight Details</h4>']
 
@@ -489,10 +576,12 @@ def generate_flight_details_section(flight_offer: dict) -> str:
     currency = flight_offer.get("currency", "")
     bookable_seats = summary.get("numberOfBookableSeats", 0)
 
+    trip_label = "One-Way" if trip_type == "one_way" else "Round Trip"
+
     html_parts.append(f"""
     <div class="flight-offer">
         <div class="flight-offer-header">
-            <h5 class="flight-option-title">Selected Flight</h5>
+            <h5 class="flight-option-title">Selected Flight ({trip_label})</h5>
             <div class="flight-price-info">
                 <div class="flight-total-price">{price:,.2f} {currency}</div>
                 <div class="flight-seats">Available Seats: {bookable_seats}</div>
@@ -516,8 +605,9 @@ def generate_flight_details_section(flight_offer: dict) -> str:
     # Process outbound flights
     html_parts.append(process_flight_segments(summary.get("outbound"), "Outbound"))
     
-    # Process return flights  
-    html_parts.append(process_flight_segments(summary.get("return"), "Return"))
+    # Process return flights (only if round trip)
+    if trip_type == "round_trip":
+        html_parts.append(process_flight_segments(summary.get("return"), "Return"))
 
     html_parts.append("</tbody></table></div>")
 

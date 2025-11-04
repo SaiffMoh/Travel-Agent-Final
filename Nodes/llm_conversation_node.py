@@ -1,6 +1,6 @@
 import json
 import os
-import re  # Added import
+import re
 from Models.TravelSearchState import TravelSearchState
 from langchain_core.messages import HumanMessage
 from Utils.watson_config import llm
@@ -52,17 +52,28 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
                 state["cabin_class"] = llm_result["cabin_class"]
             if llm_result.get("duration") is not None:
                 state["duration"] = llm_result["duration"]
+            
+            # NEW: Extract request_type and trip_type
+            if llm_result.get("request_type"):
+                state["request_type"] = llm_result["request_type"]
+            else:
+                # Default to packages if not specified
+                state["request_type"] = state.get("request_type", "packages")
+            
+            if llm_result.get("trip_type"):
+                state["trip_type"] = llm_result["trip_type"]
+            else:
+                # Default to round_trip if not specified
+                state["trip_type"] = state.get("trip_type", "round_trip")
 
             # Update control flags
             state["followup_question"] = llm_result.get("followup_question")
             state["needs_followup"] = llm_result.get("needs_followup", True)
             state["info_complete"] = llm_result.get("info_complete", False)
 
-            # If LLM believes it's complete, set request type
-            if llm_result.get("info_complete"):
-                state["request_type"] = state.get("request_type") or "flights"
-                
+            # Log extracted information
             logger.info(f"Updated state - Origin: {state.get('origin')}, Destination: {state.get('destination')}, Date: {state.get('departure_date')}")
+            logger.info(f"Request type: {state.get('request_type')}, Trip type: {state.get('trip_type')}")
             logger.info(f"Info complete: {state.get('info_complete')}, Needs followup: {state.get('needs_followup')}")
 
         except json.JSONDecodeError as je:
@@ -73,7 +84,7 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
 
     except Exception as e:
         logger.error(f"Error in LLM conversation node: {e}")
-        state["followup_question"] = "I'm having technical difficulties. Please try again with your flight details."
+        state["followup_question"] = "I'm having technical difficulties. Please try again with your travel details."
         state["needs_followup"] = True
         state["info_complete"] = False
 

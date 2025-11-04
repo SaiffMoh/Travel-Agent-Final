@@ -22,9 +22,10 @@ load_dotenv('.env')
 class VisaRAGConfig:
     """Configuration for the Visa RAG system"""
     pdf_directory: str = "data/visa_pdfs"
-    chunk_size: int = 1500
-    chunk_overlap: int = 300
-    embeddings_model: str = "multi-qa-mpnet-base-dot-v1"
+    chunk_size: int = 800  # Reduced for better granularity
+    chunk_overlap: int = 200  # Increased overlap for context
+    # CHANGED: Better multilingual model
+    embeddings_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     base_vector_store_path: str = "data/visa_vector_stores"
     country_mapping_file: str = "data/country_mapping.json"
 
@@ -35,6 +36,27 @@ def extract_country_from_filename(pdf_file: Path) -> str:
     country_cleaned = country_cleaned.strip()
     country_name = " ".join(word.capitalize() for word in country_cleaned.split())
     return country_name if country_name else pdf_file.stem.title()
+
+def detect_language_robust(text: str) -> str:
+    """Robust language detection for mixed Arabic/English text"""
+    if not text or len(text.strip()) < 10:
+        return "unknown"
+    
+    arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06FF')
+    latin_chars = sum(1 for c in text if c.isalpha() and c < '\u0600')
+    total_chars = arabic_chars + latin_chars
+    
+    if total_chars == 0:
+        return "unknown"
+    
+    arabic_ratio = arabic_chars / total_chars
+    
+    if arabic_ratio > 0.7:
+        return "arabic"
+    elif arabic_ratio > 0.3:
+        return "mixed"  # Both languages present
+    else:
+        return "english"
 
 def assess_text_quality(text: str) -> Dict[str, any]:
     """Assess the quality of extracted text from PDF"""
@@ -49,17 +71,17 @@ def assess_text_quality(text: str) -> Dict[str, any]:
         return {"quality": "poor", "reason": "no_text", "confidence": 0.0}
     
     corruption_indicators = [
-        len(re.findall(r'[^\w\s\u0600-\u06FF.,!?()-]', text)),
+        len(re.findall(r'[^\w\s\u0600-\u06FF.,!?()-:/]', text)),
         len(re.findall(r'\s{3,}', text)),
         len(re.findall(r'[A-Z]{5,}', text)),
         text.count('ﻭ') + text.count('ﺔ') > len(text) * 0.3
     ]
     
-    corruption_score = sum(1 for indicator in corruption_indicators if indicator)
+    corruption_score = sum(1 for indicator in corruption_indicators if indicator > 10)
     
     if corruption_score >= 3:
         quality = "poor"
-        confidence = 0.2
+        confidence = 0.3
     elif corruption_score >= 2:
         quality = "medium"
         confidence = 0.6
@@ -69,8 +91,8 @@ def assess_text_quality(text: str) -> Dict[str, any]:
     
     if arabic_chars > 0 and latin_chars > 0:
         mixed_ratio = min(arabic_chars, latin_chars) / max(arabic_chars, latin_chars)
-        if mixed_ratio > 0.3:
-            confidence *= 0.7
+        if mixed_ratio > 0.2:
+            confidence *= 0.85  # Slightly penalize but don't discard mixed content
     
     return {
         "quality": quality,
@@ -78,7 +100,8 @@ def assess_text_quality(text: str) -> Dict[str, any]:
         "arabic_ratio": arabic_chars / total_chars if total_chars > 0 else 0,
         "latin_ratio": latin_chars / total_chars if total_chars > 0 else 0,
         "corruption_score": corruption_score,
-        "total_length": len(text)
+        "total_length": len(text),
+        "is_mixed": arabic_chars > 0 and latin_chars > 0
     }
 
 def clean_extracted_text(text: str) -> str:
@@ -88,8 +111,9 @@ def clean_extracted_text(text: str) -> str:
     
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text)
-    # Remove Arabic diacritics
-    text = re.sub(r'[\u064B-\u065F\u0670\u0640]', '', text)
+    # Remove Arabic diacritics but keep base letters
+    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
+    # Keep tatweel for certain cases
     # Fix spaced letters
     text = re.sub(r'([a-zA-Z])\s+([a-zA-Z])\s+([a-zA-Z])', r'\1\2\3', text)
     
@@ -103,77 +127,117 @@ def clean_extracted_text(text: str) -> str:
     
     return '\n'.join(cleaned_lines).strip()
 
-def reassemble_fragments(text: str, similarity_threshold: float = 0.6) -> str:
-    """Reassemble OCR fragments in mixed-language text."""
-    lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 5]
+def split_bilingual_content(text: str) -> Dict[str, str]:
+    """Attempt to separate Arabic and English content"""
+    lines = text.split('\n')
     
-    reassembled = []
-    i = 0
-    while i < len(lines):
-        current = lines[i]
-        j = i + 1
-        while j < len(lines):
-            similarity = SequenceMatcher(None, current.lower(), lines[j].lower()).ratio()
-            if similarity > similarity_threshold and any(keyword in lines[j].lower() for keyword in ['photo', 'passport', 'invitation', 'bank', 'applicant', 'letter', 'statement']):
-                current += ' ' + lines[j]
-                j += 1
-            else:
-                break
-        reassembled.append(current)
-        i = j
+    arabic_lines = []
+    english_lines = []
     
-    return re.sub(r'\s+', ' ', ' '.join(reassembled))
+    for line in lines:
+        lang = detect_language_robust(line)
+        if lang == "arabic":
+            arabic_lines.append(line)
+        elif lang == "english":
+            english_lines.append(line)
+        elif lang == "mixed":
+            # For mixed lines, add to both
+            arabic_lines.append(line)
+            english_lines.append(line)
+    
+    return {
+        "arabic": "\n".join(arabic_lines),
+        "english": "\n".join(english_lines),
+        "combined": text
+    }
 
 def enhanced_load_pdf_for_country(pdf_file: Path, country_name: str) -> List[Document]:
-    """Enhanced PDF loading with quality assessment and fragment reassembly"""
+    """Enhanced PDF loading with language separation and quality assessment"""
     documents = []
     
     try:
         loader = PyPDFLoader(str(pdf_file))
         docs = loader.load()
         
-        for doc in docs:
+        print(f"Processing {len(docs)} pages from {pdf_file.name}...")
+        
+        for page_num, doc in enumerate(docs, 1):
             quality_info = assess_text_quality(doc.page_content)
             original_content = doc.page_content
             cleaned_content = clean_extracted_text(original_content)
-            cleaned_content = reassemble_fragments(cleaned_content)
             
-            if quality_info['arabic_ratio'] > 0.1:
-                try:
-                    reshaped = arabic_reshaper.reshape(cleaned_content)
-                    cleaned_content = get_display(reshaped)
-                except Exception as e:
-                    print(f"Warning: Arabic processing failed for {pdf_file}: {e}")
+            # Split bilingual content
+            lang_split = split_bilingual_content(cleaned_content)
+            detected_lang = detect_language_robust(cleaned_content)
             
-            try:
-                lang = detect(cleaned_content)
-            except:
-                lang = "mixed" if quality_info['arabic_ratio'] > 0.1 and quality_info['latin_ratio'] > 0.1 else "unknown"
-            
-            doc.page_content = cleaned_content
-            doc.metadata.update({
-                "country": country_name,
-                "country_normalized": country_name.lower().replace(" ", "_"),
-                "source_file": str(pdf_file),
-                "doc_type": "visa_requirements",
-                "language": lang,
-                "text_quality": quality_info['quality'],
-                "quality_confidence": quality_info['confidence'],
-                "arabic_ratio": quality_info['arabic_ratio'],
-                "latin_ratio": quality_info['latin_ratio'],
-                "original_length": len(original_content),
-                "cleaned_length": len(cleaned_content),
-                "file_size": pdf_file.stat().st_size if pdf_file.exists() else 0
-            })
-            
-            if quality_info['quality'] == 'poor':
-                doc.page_content = f"[WARNING: Poor text extraction quality - content may be unreliable]\n\n{doc.page_content}"
-            elif quality_info['quality'] == 'medium':
-                doc.page_content = f"[NOTE: Text extraction may contain some errors]\n\n{doc.page_content}"
+            # If mixed content, create separate documents for each language
+            if quality_info['is_mixed'] and len(lang_split['arabic']) > 50 and len(lang_split['english']) > 50:
+                # Arabic version
+                if lang_split['arabic']:
+                    arabic_doc = Document(
+                        page_content=lang_split['arabic'],
+                        metadata={
+                            "country": country_name,
+                            "country_normalized": country_name.lower().replace(" ", "_"),
+                            "source_file": str(pdf_file),
+                            "page": page_num,
+                            "doc_type": "visa_requirements",
+                            "language": "arabic",
+                            "content_type": "arabic_only",
+                            "text_quality": quality_info['quality'],
+                            "quality_confidence": quality_info['confidence'],
+                            "file_size": pdf_file.stat().st_size if pdf_file.exists() else 0
+                        }
+                    )
+                    documents.append(arabic_doc)
+                
+                # English version
+                if lang_split['english']:
+                    english_doc = Document(
+                        page_content=lang_split['english'],
+                        metadata={
+                            "country": country_name,
+                            "country_normalized": country_name.lower().replace(" ", "_"),
+                            "source_file": str(pdf_file),
+                            "page": page_num,
+                            "doc_type": "visa_requirements",
+                            "language": "english",
+                            "content_type": "english_only",
+                            "text_quality": quality_info['quality'],
+                            "quality_confidence": quality_info['confidence'],
+                            "file_size": pdf_file.stat().st_size if pdf_file.exists() else 0
+                        }
+                    )
+                    documents.append(english_doc)
+            else:
+                # Single language or not worth splitting
+                doc.page_content = cleaned_content
+                doc.metadata.update({
+                    "country": country_name,
+                    "country_normalized": country_name.lower().replace(" ", "_"),
+                    "source_file": str(pdf_file),
+                    "page": page_num,
+                    "doc_type": "visa_requirements",
+                    "language": detected_lang,
+                    "content_type": "mixed" if detected_lang == "mixed" else detected_lang,
+                    "text_quality": quality_info['quality'],
+                    "quality_confidence": quality_info['confidence'],
+                    "arabic_ratio": quality_info['arabic_ratio'],
+                    "latin_ratio": quality_info['latin_ratio'],
+                    "original_length": len(original_content),
+                    "cleaned_length": len(cleaned_content),
+                    "file_size": pdf_file.stat().st_size if pdf_file.exists() else 0
+                })
+                
+                if quality_info['quality'] == 'poor':
+                    doc.page_content = f"[WARNING: Poor text extraction quality]\n\n{doc.page_content}"
+                elif quality_info['quality'] == 'medium':
+                    doc.page_content = f"[NOTE: Text may contain extraction errors]\n\n{doc.page_content}"
+                
+                documents.append(doc)
         
-        documents.extend(docs)
-        avg_quality = sum(assess_text_quality(doc.page_content)['confidence'] for doc in docs) / len(docs) if docs else 0
-        print(f"✓ Loaded {len(docs)} pages from {pdf_file} for {country_name} (avg quality: {avg_quality:.2f})")
+        avg_quality = sum(assess_text_quality(doc.page_content)['confidence'] for doc in documents) / len(documents) if documents else 0
+        print(f"✓ Loaded {len(documents)} document chunks from {pdf_file.name} (avg quality: {avg_quality:.2f})")
         
     except Exception as e:
         print(f"✗ Error loading {pdf_file}: {e}")
@@ -181,19 +245,21 @@ def enhanced_load_pdf_for_country(pdf_file: Path, country_name: str) -> List[Doc
     return documents
 
 def create_country_vector_stores():
-    """Create separate vector stores for each country"""
+    """Create separate vector stores for each country with metadata filtering support"""
     config = VisaRAGConfig()
     
-    # Use HuggingFaceEmbeddings for LangChain compatibility
+    # Use multilingual embeddings
     embeddings = HuggingFaceEmbeddings(
         model_name=config.embeddings_model,
         model_kwargs={'device': 'cpu'}
     )
     
+    # Custom splitter for better handling of bilingual content
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=config.chunk_size,
         chunk_overlap=config.chunk_overlap,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        separators=["\n\n", "\n", ". ", "• ", " ", ""],
+        length_function=len
     )
     
     pdf_dir = Path(config.pdf_directory)
@@ -209,6 +275,7 @@ def create_country_vector_stores():
         raise ValueError(f"No PDF files found in {pdf_dir}")
     
     print(f"Found {len(pdf_files)} PDF files to process...")
+    print(f"Using embedding model: {config.embeddings_model}")
     
     country_mapping = {}
     successful_countries = []
@@ -236,7 +303,13 @@ def create_country_vector_stores():
                 failed_countries.append(country_name)
                 continue
             
-            # Create FAISS vector store from documents
+            # Count chunks by language
+            arabic_chunks = sum(1 for c in chunks if c.metadata.get('language') in ['arabic', 'mixed'])
+            english_chunks = sum(1 for c in chunks if c.metadata.get('language') in ['english', 'mixed'])
+            
+            print(f"  Created {len(chunks)} chunks ({arabic_chunks} Arabic, {english_chunks} English)")
+            
+            # Create FAISS vector store
             vector_store = FAISS.from_documents(
                 documents=chunks,
                 embedding=embeddings
@@ -253,16 +326,20 @@ def create_country_vector_stores():
                 "store_path": str(country_store_path),
                 "pdf_source": str(pdf_file),
                 "chunk_count": len(chunks),
-                "page_count": len(documents)
+                "page_count": len(documents),
+                "arabic_chunks": arabic_chunks,
+                "english_chunks": english_chunks,
+                "embedding_model": config.embeddings_model
             }
             
             successful_countries.append(country_name)
             print(f"✅ Successfully created vector store for {country_name}")
             print(f"  📁 Stored at: {country_store_path}")
-            print(f"  📄 {len(documents)} pages, {len(chunks)} chunks")
             
         except Exception as e:
             print(f"❌ Failed to process {pdf_file}: {e}")
+            import traceback
+            traceback.print_exc()
             country_name_var = country_name if 'country_name' in locals() else pdf_file.stem
             failed_countries.append(country_name_var)
     
@@ -306,54 +383,14 @@ def list_available_countries():
     for key, info in sorted(country_mapping.items()):
         store_exists = Path(info['store_path']).exists()
         status = "✅" if store_exists else "❌"
-        print(f"  {status} {info['display_name']} ({info['chunk_count']} chunks, {info['page_count']} pages)")
+        arabic = info.get('arabic_chunks', 0)
+        english = info.get('english_chunks', 0)
+        print(f"  {status} {info['display_name']} ({info['chunk_count']} chunks: {arabic} AR, {english} EN)")
     
     return country_mapping
 
-def test_vector_store_loading():
-    """Test loading vector stores to ensure they work properly"""
-    config = VisaRAGConfig()
-    mapping_file = Path(config.country_mapping_file)
-    
-    if not mapping_file.exists():
-        print("No country mapping found. Run create_country_vector_stores() first.")
-        return
-    
-    with open(mapping_file, 'r', encoding='utf-8') as f:
-        country_mapping = json.load(f)
-    
-    # Use HuggingFaceEmbeddings for consistency
-    embeddings = HuggingFaceEmbeddings(
-        model_name=config.embeddings_model,
-        model_kwargs={'device': 'cpu'}
-    )
-    
-    print("🧪 Testing vector store loading...")
-    
-    for country_key, info in list(country_mapping.items())[:3]:  # Test first 3 countries
-        try:
-            store_path = Path(info['store_path'])
-            if not store_path.exists():
-                print(f"❌ {info['display_name']}: Store path doesn't exist")
-                continue
-            
-            vector_store = FAISS.load_local(
-                str(store_path),
-                embeddings,
-                allow_dangerous_deserialization=True
-            )
-            
-            # Test a simple search
-            test_results = vector_store.similarity_search("visa requirements", k=2)
-            print(f"✅ {info['display_name']}: Loaded successfully, found {len(test_results)} test results")
-            
-        except Exception as e:
-            print(f"❌ {info['display_name']}: Error loading - {e}")
-
 if __name__ == "__main__":
-    print("🚀 Creating country-specific vector stores...")
+    print("🚀 Creating country-specific vector stores with multilingual support...")
     mapping = create_country_vector_stores()
     print("\n📋 Listing available countries...")
     list_available_countries()
-    print("\n🧪 Testing vector store loading...")
-    test_vector_store_loading()

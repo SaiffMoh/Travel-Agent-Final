@@ -27,9 +27,13 @@ def build_input_extraction_prompt(state: TravelSearchState) -> str:
         current_state_info += f"Current cabin class: {state['cabin_class']}\n"
     if state.get("duration"):
         current_state_info += f"Current duration: {state['duration']} days\n"
+    if state.get("request_type"):
+        current_state_info += f"Current request type: {state['request_type']}\n"
+    if state.get("trip_type"):
+        current_state_info += f"Current trip type: {state['trip_type']}\n"
 
     return f"""
-You are an expert travel assistant helping users book flights. Today's date is {current_date_str}.
+You are an expert travel assistant helping users book flights, hotels, or complete travel packages. Today's date is {current_date_str}.
 
 CONVERSATION SO FAR:
 {conversation_text}
@@ -43,8 +47,10 @@ CURRENT CONTEXT:
 
 YOUR TASKS:
 1. Determine if this is a NEW travel search request or continuation of existing search
-2. Extract/update flight information intelligently
-3. Handle seamless transitions between different requests
+2. Extract/update travel information intelligently
+3. Detect what the user wants: flights only, hotels only, or full package
+4. Detect if they want one-way or round trip (for flights/packages)
+5. Handle seamless transitions between different requests
 
 CRITICAL DETECTION RULES:
 - If user mentions NEW destinations that differ from current destination → treat as NEW search
@@ -59,6 +65,18 @@ NEW SEARCH DETECTION (ENHANCED):
 - User says "now I want to..." or "I also want to..." = NEW search
 - User provides origin+destination combo that differs from current = NEW search
 
+REQUEST TYPE DETECTION (NEW):
+- If user says "just hotels", "only hotels", "hotel only" → request_type = "hotels"
+- If user says "just flights", "only flights", "flight only" → request_type = "flights"
+- If user wants complete travel with both flights and hotels → request_type = "packages"
+- If user doesn't specify → default to "packages"
+
+TRIP TYPE DETECTION (NEW - FOR FLIGHTS/PACKAGES ONLY):
+- If user says "one way", "one-way", "no return", "single trip" → trip_type = "one_way"
+- If user says "round trip", "return flight", "there and back" → trip_type = "round_trip"
+- If user doesn't specify → default to "round_trip"
+- NOTE: trip_type only applies to flights and packages, NOT hotels-only requests
+
 DATE PARSING RULES (CRITICAL):
 - If user says "august 20th" or "Aug 20" → convert to "2025-08-20" 
 - If year omitted: use {current_year}, UNLESS month is before {current_month}, then use {current_year + 1}
@@ -71,31 +89,53 @@ LOCATION PARSING:
 - Convert casual names: "NYC" → "New York", "LA" → "Los Angeles"
 - Accept abbreviations and full names
 
-CABIN CLASS PARSING:
+CABIN CLASS PARSING (FOR FLIGHTS/PACKAGES ONLY):
 - "eco" → "economy", "biz" → "business", "first" → "first class"
 - If not specified → return null (do not assume)
+- NOTE: cabin_class only applies when request_type is "flights" or "packages"
 
 DURATION PARSING:
 - Numbers like "5", "5 days", "one week" → convert to number of days
-- Default to 7 if not specified and all other info is complete
+- For hotels: duration = number of nights staying
+- For round trip flights/packages: duration = number of days until return
+- For one-way flights: duration = null (not needed)
+- Default to 7 if not specified and request needs it
 
-REQUIRED INFORMATION FOR COMPLETE SEARCH:
-1. departure_date (YYYY-MM-DD format)
-2. origin (city name)
-3. destination (city name) 
-4. cabin_class (economy/business/first class)
-5. duration (number of days for round trip)
+REQUIRED INFORMATION LOGIC (CRITICAL):
+
+For request_type = "hotels":
+- Required: departure_date (checkin date), origin, destination, duration (nights)
+- NOT required: cabin_class, trip_type
+
+For request_type = "flights" with trip_type = "one_way":
+- Required: departure_date, origin, destination, cabin_class
+- NOT required: duration, trip_type stays as "one_way"
+
+For request_type = "flights" with trip_type = "round_trip":
+- Required: departure_date, origin, destination, cabin_class, duration
+- trip_type = "round_trip"
+
+For request_type = "packages" with trip_type = "one_way":
+- Required: departure_date, origin, destination, cabin_class
+- NOT required: duration, trip_type stays as "one_way"
+
+For request_type = "packages" with trip_type = "round_trip":
+- Required: departure_date, origin, destination, cabin_class, duration
+- trip_type = "round_trip"
 
 COMPLETION LOGIC (CRITICAL):
-- ALL 5 fields must be present to mark info_complete=true
+- ALL required fields (based on request_type and trip_type above) must be present to mark info_complete=true
 - If user provides just a number (like "5") when we're asking for duration, treat as duration in days
-- If 4 out of 5 fields are present and user gives remaining info, complete immediately
 - Set needs_followup=false and followup_question=null when complete
 
 FOLLOWUP QUESTION RULES:
 - For NEW searches: Ask for missing info efficiently 
 - For continuing searches: Ask for ONE missing piece only
-- If it's a new search but user provided some info: "I see you want to go from [origin] to [destination]. What's your departure date and how many days will you stay?"
+- Be smart about what to ask based on request_type and trip_type
+- Examples:
+  - For hotels: "How many nights will you be staying?"
+  - For one-way: "Which cabin class do you prefer?"
+  - For round trip: "How many days until you return?"
 - Always ask natural, conversational questions
 
 RESPONSE FORMAT (STRICT JSON ONLY, no prose, no backticks):
@@ -103,8 +143,10 @@ RESPONSE FORMAT (STRICT JSON ONLY, no prose, no backticks):
     "departure_date": "YYYY-MM-DD or null",
     "origin": "City Name or null", 
     "destination": "City Name or null",
-    "cabin_class": "economy/business/first class or null",
+    "cabin_class": "economy/business/first class or null (null for hotels-only)",
     "duration": number_or_null,
+    "request_type": "flights/hotels/packages",
+    "trip_type": "round_trip/one_way (only relevant for flights/packages)",
     "followup_question": "Ask for missing info OR null if complete",
     "needs_followup": true_or_false,
     "info_complete": true_or_false,
@@ -112,9 +154,9 @@ RESPONSE FORMAT (STRICT JSON ONLY, no prose, no backticks):
 }}
 
 COMPLETION EXAMPLES:
-- If ALL 5 fields present → {{"info_complete": true, "needs_followup": false, "followup_question": null}}
-- If 4/5 fields present → {{"info_complete": false, "needs_followup": true, "followup_question": "What's missing?"}}
-- User says "5" when asked for duration → {{"duration": 5, "info_complete": true, "needs_followup": false, "followup_question": null}} (if other fields complete)
+- Hotels request with all info → {{"request_type": "hotels", "info_complete": true, "needs_followup": false, "followup_question": null}}
+- One-way flight with all info (no duration) → {{"request_type": "flights", "trip_type": "one_way", "info_complete": true, "needs_followup": false}}
+- Round trip package missing duration → {{"request_type": "packages", "trip_type": "round_trip", "info_complete": false, "needs_followup": true, "followup_question": "How many days will your trip last?"}}
 
-BE SMART: When all required info is present, immediately mark as complete. Don't ask unnecessary confirmation questions.
+BE SMART: When all required info (based on request_type and trip_type) is present, immediately mark as complete. Don't ask unnecessary confirmation questions.
 """

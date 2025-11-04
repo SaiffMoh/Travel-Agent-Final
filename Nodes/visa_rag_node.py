@@ -1,3 +1,4 @@
+        
 from typing import Optional, List, Dict
 from pathlib import Path
 from langchain_community.vectorstores import FAISS
@@ -11,34 +12,29 @@ import json
 import re
 import logging
 from difflib import get_close_matches
-from rank_bm25 import BM25Okapi
 
 load_dotenv('.env')
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VisaRAGConfig:
     """Configuration for the Visa RAG system"""
-    top_k: int = 5
-    embeddings_model: str = "multi-qa-mpnet-base-dot-v1"  # Multilingual model
+    top_k: int = 8  # Increased for better coverage
+    embeddings_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     base_vector_store_path: str = "data/visa_vector_stores"
     country_mapping_file: str = "data/country_mapping.json"
     llm_model: str = "llama-3.3-70b-instruct"
 
 class CountrySpecificVisaRAG:
-    """Enhanced RAG system that loads country-specific vector stores on demand with hybrid retrieval"""
+    """Enhanced RAG system with metadata filtering and bilingual support"""
     
     def __init__(self, config: VisaRAGConfig):
         self.config = config
-        # Use HuggingFaceEmbeddings for LangChain compatibility
         self.embeddings = HuggingFaceEmbeddings(
             model_name=config.embeddings_model,
             model_kwargs={'device': 'cpu'}
         )
-        # Keep SentenceTransformer for encoding if needed
-        self.sentence_transformer = SentenceTransformer(config.embeddings_model)
         self.country_mapping = self._load_country_mapping()
         self._loaded_stores = {}
     
@@ -117,10 +113,9 @@ class CountrySpecificVisaRAG:
         
         try:
             logger.info(f"Loading vector store for {country_key} from {store_path}")
-            # Use the HuggingFaceEmbeddings object instead of SentenceTransformer
             vector_store = FAISS.load_local(
                 str(store_path),
-                self.embeddings,  # This is now HuggingFaceEmbeddings
+                self.embeddings,
                 allow_dangerous_deserialization=True
             )
             self._loaded_stores[country_key] = vector_store
@@ -130,8 +125,9 @@ class CountrySpecificVisaRAG:
             logger.error(f"Error loading vector store for {country_key}: {e}")
             return None
     
-    def retrieve_documents(self, query: str, country_key: str) -> List[Document]:
-        """Retrieve relevant documents using dense retrieval with fallback BM25"""
+    def retrieve_documents_with_filtering(self, query: str, country_key: str, 
+                                         preferred_language: Optional[str] = None) -> List[Document]:
+        """Retrieve relevant documents with optional language filtering"""
         vector_store = self.load_country_vector_store(country_key)
         
         if not vector_store:
@@ -139,31 +135,32 @@ class CountrySpecificVisaRAG:
             return []
         
         try:
-            # Perform dense retrieval using FAISS
-            docs = vector_store.similarity_search(query, k=self.config.top_k)
+            # Get more documents initially for filtering
+            initial_k = self.config.top_k * 2
+            docs = vector_store.similarity_search(query, k=initial_k)
             
             if not docs:
                 logger.warning(f"No documents retrieved for query: {query}")
                 return []
             
-            # Optional: Recompute BM25 scores for re-ranking
-            try:
-                tokenized_query = query.lower().split()
-                doc_texts = [doc.page_content for doc in docs]
-                tokenized_corpus = [text.lower().split() for text in doc_texts]
-                
-                if tokenized_corpus and all(tokenized_corpus):
-                    bm25 = BM25Okapi(tokenized_corpus)
-                    bm25_scores = bm25.get_scores(tokenized_query)
-                    
-                    # Combine documents with scores and re-rank
-                    doc_score_pairs = list(zip(docs, bm25_scores))
-                    doc_score_pairs.sort(key=lambda x: x[1], reverse=True)
-                    docs = [doc for doc, _ in doc_score_pairs[:self.config.top_k]]
-                    
-                    logger.info(f"Re-ranked documents using BM25 scores")
-            except Exception as bm25_error:
-                logger.warning(f"BM25 re-ranking failed, using original order: {bm25_error}")
+            # Filter by language preference if specified
+            if preferred_language:
+                filtered_docs = [
+                    doc for doc in docs 
+                    if doc.metadata.get('language') == preferred_language 
+                    or doc.metadata.get('language') == 'mixed'
+                ]
+                if filtered_docs:
+                    docs = filtered_docs[:self.config.top_k]
+                    logger.info(f"Filtered to {len(docs)} {preferred_language} documents")
+            
+            # Sort by quality score
+            docs_with_scores = [
+                (doc, doc.metadata.get('quality_confidence', 0.5))
+                for doc in docs
+            ]
+            docs_with_scores.sort(key=lambda x: x[1], reverse=True)
+            docs = [doc for doc, _ in docs_with_scores[:self.config.top_k]]
             
             logger.info(f"Retrieved {len(docs)} documents for {country_key}")
             return docs
@@ -172,8 +169,8 @@ class CountrySpecificVisaRAG:
             logger.error(f"Error retrieving documents for {country_key}: {e}")
             return []
 
-    def answer_query(self, query: str, target_country: Optional[str] = None) -> str:
-        """Generate answer using country-specific vector store"""
+    def answer_query(self, query: str, target_country: Optional[str] = None) -> tuple[str, List[Document]]:
+        """Generate answer using country-specific vector store. Returns (answer, source_docs)"""
         country_key = None
         
         if target_country:
@@ -184,65 +181,73 @@ class CountrySpecificVisaRAG:
         
         if not country_key:
             available_countries = [info['display_name'] for info in self.country_mapping.values()]
-            return f"""I couldn't determine which country you're asking about for visa requirements. 
+            return (f"""I couldn't determine which country you're asking about for visa requirements. 
 
-Available countries: {', '.join(sorted(available_countries[:10]))}{'...' if len(available_countries) > 10 else ''}
+Available countries: {', '.join(sorted(available_countries[:15]))}{'...' if len(available_countries) > 15 else ''}
 
-Please specify a country name in your question.
-
-Is there anything else you'd like to know about travel or visa requirements?"""
+Please specify a country name in your question.""", [])
         
         country_info = self.country_mapping[country_key]
         country_display = country_info['display_name']
         
         logger.info(f"Processing visa query for {country_display}")
-        documents = self.retrieve_documents(query, country_key)
+        
+        # Detect query language for better retrieval
+        query_lang = self._detect_query_language(query)
+        documents = self.retrieve_documents_with_filtering(query, country_key, preferred_language=query_lang)
         
         if not documents:
-            return f"""I found the country ({country_display}) but couldn't retrieve specific visa requirement documents. This might be due to:
-- The vector store for {country_display} might not be properly loaded
-- No relevant information found for your specific query
+            return (f"""I found the country ({country_display}) but couldn't retrieve specific visa requirement documents.
 
-Please try rephrasing your question or ask about visa requirements for {country_display} in general.
-
-Is there anything else you'd like to know about travel or visa requirements?"""
+Please try rephrasing your question or ask about visa requirements for {country_display} in general.""", [])
         
-        # Process documents for the prompt
-        doc_contents = "\n\n".join([
-            f"Document from {doc.metadata.get('country', 'Unknown')} "
-            f"(Language: {doc.metadata.get('language', 'Unknown')}, "
-            f"Page {doc.metadata.get('page', 'N/A')}):\n{doc.page_content}"
-            for doc in documents
-        ])
-        doc_contents = doc_contents[:10000]  # Limit content length
+        # Separate Arabic and English content
+        arabic_docs = [d for d in documents if d.metadata.get('language') in ['arabic', 'mixed']]
+        english_docs = [d for d in documents if d.metadata.get('language') in ['english', 'mixed']]
         
-        prompt_template = f"""<|SYSTEM|>You are a visa requirements expert fluent in English and Arabic. You MUST base your answer STRICTLY AND ONLY on the following documents extracted from official PDF sources for {country_display}. 
+        # Build context with language separation
+        context_parts = []
+        
+        if english_docs:
+            context_parts.append("=== ENGLISH VERSION ===")
+            for doc in english_docs[:4]:
+                context_parts.append(f"[Page {doc.metadata.get('page', 'N/A')}]\n{doc.page_content}")
+        
+        if arabic_docs:
+            context_parts.append("\n=== ARABIC VERSION (عربي) ===")
+            for doc in arabic_docs[:4]:
+                context_parts.append(f"[صفحة {doc.metadata.get('page', 'N/A')}]\n{doc.page_content}")
+        
+        doc_contents = "\n\n".join(context_parts)[:15000]  # Limit total length
+        
+        prompt_template = f"""<|SYSTEM|>You are a visa requirements expert fluent in English and Arabic.
 
 CRITICAL INSTRUCTIONS:
-- Do NOT add any external knowledge about visa requirements
-- Do NOT mention requirements not explicitly stated in the documents
-- If information is unclear due to OCR errors or mixed languages, state this clearly
-- If documents lack specific information (e.g., fees, processing times), say 'Not mentioned in the provided documents'
-- Translate any Arabic text accurately, marking uncertain translations with '[Uncertain]'
-- Acknowledge any corrupted or unclear text
+- Base your answer STRICTLY on the provided documents for {country_display}
+- The documents contain BOTH English and Arabic versions - use BOTH to provide complete information
+- If English and Arabic versions differ, mention BOTH perspectives
+- Present information in a clear, structured format
+- List ALL requirements mentioned (documents, photos, fees, processing time, etc.)
+- If information is unclear or contradictory between languages, explicitly state this
+- Do NOT add external knowledge or assumptions
 
 Query: {query}
 Target Country: {country_display}
-Documents Available: {len(documents)} relevant documents
+Documents Available: {len(documents)} (English: {len(english_docs)}, Arabic: {len(arabic_docs)})
 
-Documents (may contain OCR errors or mixed languages):
+DOCUMENTS:
 {doc_contents}
 
-Based ONLY on the above documents, provide a response that:
-1. Lists ONLY the requirements explicitly mentioned
-2. Clearly notes missing, unclear, or corrupted information
-3. Acknowledges text extraction or language issues
-4. Avoids inventing or assuming standard requirements
+Provide a comprehensive, well-structured response covering:
+1. **Required Documents** - List all documents needed
+2. **Application Process** - Steps to apply
+3. **Fees & Processing Time** - If mentioned
+4. **Important Notes** - Any special conditions or restrictions
+5. **Language Differences** - Note any differences between English/Arabic versions
 
-Format response clearly without adding unmentioned details.
-
-End with: 'Is there anything else you'd like to know about travel or visa requirements?'
-<|USER|>Provide response based strictly on document content.<|END|>"""
+Format using clear sections with bullet points.
+End with: "Need more help? I can also assist with flight and hotel bookings!"
+<|USER|>Provide comprehensive visa requirements based on the documents.<|END|>"""
         
         logger.info(f"Generating response for {country_display} with {len(documents)} documents")
         
@@ -252,16 +257,26 @@ End with: 'Is there anything else you'd like to know about travel or visa requir
             visa_answer = raw_answer.split('<|')[0].strip()
             
             logger.info(f"Successfully generated response for {country_display}")
-            return visa_answer
+            return visa_answer, documents
         except Exception as e:
             logger.error(f"Error generating response for {country_display}: {e}")
-            return f"""I encountered an error while processing visa requirements for {country_display}: {str(e)}
+            return (f"""I encountered an error while processing visa requirements for {country_display}: {str(e)}
 
-Is there anything else you'd like to know about travel or visa requirements?"""
+Need more help? I can also assist with flight and hotel bookings!""", documents)
+
+    def _detect_query_language(self, query: str) -> Optional[str]:
+        """Detect if query is in English or Arabic"""
+        arabic_chars = sum(1 for c in query if '\u0600' <= c <= '\u06FF')
+        latin_chars = sum(1 for c in query if c.isalpha() and c < '\u0600')
+        
+        if arabic_chars > latin_chars:
+            return "arabic"
+        elif latin_chars > 0:
+            return "english"
+        return None
 
     def extract_country_from_query(self, query: str) -> Optional[str]:
         """Extract country from query text"""
-        # Simple extraction - look for country names in the query
         query_lower = query.lower()
         for country_key, country_info in self.country_mapping.items():
             if country_info['display_name'].lower() in query_lower:
@@ -291,7 +306,7 @@ Extract the country inquired about for visas or travel requirements.
 
 {countries_context}
 
-If none specified, infer from destination: '{dest_str}' (use 'None' if no destination).
+If none specified, infer from destination: '{dest_str}'.
 
 Match to available countries. Return closest match.
 
@@ -323,7 +338,7 @@ Reply with ONLY the country name or 'None' - no extra text.
         return None
 
 def visa_rag_node(state: TravelSearchState) -> TravelSearchState:
-    """Enhanced visa RAG node with country-specific vector stores"""
+    """Enhanced visa RAG node with professional HTML output"""
     config = VisaRAGConfig()
     rag = CountrySpecificVisaRAG(config)
     
@@ -339,56 +354,291 @@ def visa_rag_node(state: TravelSearchState) -> TravelSearchState:
     
     if not country:
         available_countries = [info['display_name'] for info in rag.country_mapping.values()]
-        countries_list = ', '.join(sorted(available_countries[:15]))
-        if len(available_countries) > 15:
-            countries_list += f" and {len(available_countries) - 15} more"
-        
-        logger.info("No country determined, providing available countries list")
-        state["visa_info_html"] = f"""
-        <div class="visa-section">
-            <h3>Visa Information</h3>
-            <p>I'd be happy to help you with visa requirements! Please specify which country you're asking about.</p>
-            <p><strong>Available countries:</strong> {countries_list}</p>
-            <p>You can also ask me about flights, hotels, or start a new travel search anytime.</p>
-        </div>
-        """
+        state["visa_info_html"] = generate_country_selection_html(available_countries)
         return state
     
     logger.info(f"Processing visa query for country: {country}")
     
     query = f"What are the visa requirements for {country}?"
-    visa_answer = rag.answer_query(query, country)
+    visa_answer, source_docs = rag.answer_query(query, country)
     
-    visa_html = f"""
-    <div class="visa-section">
-        <h3>Visa Requirements for {country}</h3>
-        <div class="visa-content">
-            {format_markdown_to_html(visa_answer)}
-        </div>
-        <div class="travel-help-note">
-            <p><strong>Need help with travel planning?</strong> I can also help you search for flights, hotels, 
-            and travel packages. Just let me know where you'd like to go!</p>
-        </div>
-    </div>
-    """
+    visa_html = generate_visa_info_html(country, visa_answer, source_docs)
     
     state["visa_info_html"] = visa_html
     return state
 
-def format_markdown_to_html(markdown_text: str) -> str:
-    """Convert basic markdown to HTML with improved formatting"""
-    html = markdown_text
+def generate_country_selection_html(available_countries: List[str]) -> str:
+    """Generate professional HTML for country selection"""
+    countries_list = ', '.join(sorted(available_countries[:20]))
+    if len(available_countries) > 20:
+        countries_list += f" and {len(available_countries) - 20} more"
     
-    # Headers
-    html = re.sub(r'### (.*?)(?=\n|$)', r'<h4>\1</h4>', html)
-    html = re.sub(r'## (.*?)(?=\n|$)', r'<h3>\1</h3>', html)
-    html = re.sub(r'# (.*?)(?=\n|$)', r'<h2>\1</h2>', html)
+    return f"""
+    <style>
+        .visa-container {{
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+        }}
+        .section-header {{
+            border-bottom: 2px solid #000;
+            padding-bottom: 12px;
+            margin-bottom: 24px;
+        }}
+        .section-title {{
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: -0.5px;
+        }}
+        .section-subtitle {{
+            font-size: 14px;
+            margin: 4px 0 0 0;
+            opacity: 0.7;
+        }}
+        .info-box {{
+            border: 1px solid #ddd;
+            padding: 16px;
+            margin-bottom: 24px;
+            background: #fafafa;
+        }}
+        .info-box p {{
+            margin: 0;
+            font-size: 14px;
+        }}
+        .countries-list {{
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin-bottom: 16px;
+            background: #fff;
+        }}
+        .countries-list p {{
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }}
+    </style>
+    <div class="visa-container">
+        <div class="section-header">
+            <h1 class="section-title">Visa Requirements Assistant</h1>
+            <p class="section-subtitle">Specify which country you're asking about</p>
+        </div>
+        
+        <div class="info-box">
+            <p><strong>How to ask:</strong> "What are the visa requirements for [Country]?" or "Do I need a visa for [Country]?"</p>
+        </div>
+        
+        <div class="countries-list">
+            <p><strong>Available countries:</strong></p>
+            <p>{countries_list}</p>
+        </div>
+        
+        <div class="info-box">
+            <p>I can also help with flight bookings, hotel search, and complete travel packages.</p>
+        </div>
+    </div>
+    """
+
+def generate_visa_info_html(country: str, visa_answer: str, source_docs: List[Document]) -> str:
+    """Generate professional HTML for visa requirements"""
     
-    # Bold text
-    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
+    # Extract sections from the answer
+    sections = parse_visa_sections(visa_answer)
     
-    # Process line by line for lists and paragraphs
-    lines = html.split('\n')
+    # Count sources
+    arabic_sources = sum(1 for d in source_docs if d.metadata.get('language') in ['arabic', 'mixed'])
+    english_sources = sum(1 for d in source_docs if d.metadata.get('language') in ['english', 'mixed'])
+    
+    return f"""
+    <style>
+        .visa-container {{
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+        }}
+        .section-header {{
+            border-bottom: 2px solid #000;
+            padding-bottom: 12px;
+            margin-bottom: 24px;
+        }}
+        .section-title {{
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: -0.5px;
+        }}
+        .section-subtitle {{
+            font-size: 14px;
+            margin: 4px 0 0 0;
+            opacity: 0.7;
+        }}
+        .info-card {{
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin-bottom: 16px;
+        }}
+        .card-title {{
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 16px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #ddd;
+        }}
+        .card-content {{
+            font-size: 14px;
+            line-height: 1.8;
+            color: #333;
+        }}
+        .card-content ul {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }}
+        .card-content li {{
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }}
+        .card-content li:last-child {{
+            border-bottom: none;
+        }}
+        .card-content p {{
+            margin: 0 0 12px 0;
+        }}
+        .sources-info {{
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.6;
+            padding: 8px 0;
+        }}
+        .notice-box {{
+            border: 1px solid #ddd;
+            padding: 20px;
+            text-align: center;
+            background: #fafafa;
+            margin-top: 16px;
+        }}
+        .notice-box p {{
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.6;
+        }}
+    </style>
+    <div class="visa-container">
+        <div class="section-header">
+            <h1 class="section-title">Visa Requirements for {country}</h1>
+            <p class="section-subtitle">Based on official sources</p>
+            <div class="sources-info">{len(source_docs)} sources ({english_sources} English, {arabic_sources} Arabic)</div>
+        </div>
+        
+        {format_visa_sections_html(sections)}
+        
+        <div class="notice-box">
+            <p>
+                I can help you find the best flights, hotels, and travel packages to {country}.<br>
+                Just tell me where you're traveling from and when you'd like to go.
+            </p>
+        </div>
+    </div>
+    """
+
+def parse_visa_sections(visa_answer: str) -> Dict[str, str]:
+    """Parse visa answer into structured sections without repetition"""
+    
+    # Stop at the closing message
+    stop_phrases = [
+        "Need more help?",
+        "I can also assist",
+        "Just tell me where"
+    ]
+    
+    for phrase in stop_phrases:
+        if phrase in visa_answer:
+            visa_answer = visa_answer.split(phrase)[0]
+    
+    sections = {}
+    current_section = None
+    current_content = []
+    
+    lines = visa_answer.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        if not line:
+            continue
+        
+        # Check if this line is a section header
+        # Pattern 1: ## Section Name
+        markdown_header = re.match(r'^##\s+(.+)$', line)
+        # Pattern 2: **Section Name** or **Section Name:**
+        bold_header = re.match(r'^\*\*([^*]+)\*\*:?\s*$', line)
+        # Pattern 3: Numbered section like "1. Section Name" at start
+        numbered_header = re.match(r'^\d+\.\s+\*\*([^*]+)\*\*', line)
+        
+        if markdown_header or bold_header or numbered_header:
+            # Save previous section if exists
+            if current_section and current_content:
+                sections[current_section] = '\n'.join(current_content).strip()
+            
+            # Start new section
+            if markdown_header:
+                current_section = markdown_header.group(1).strip()
+            elif bold_header:
+                current_section = bold_header.group(1).strip()
+            else:
+                current_section = numbered_header.group(1).strip()
+            
+            current_content = []
+        else:
+            # Add line to current section content
+            if current_section:
+                current_content.append(line)
+    
+    # Save the last section
+    if current_section and current_content:
+        sections[current_section] = '\n'.join(current_content).strip()
+    
+    # If no sections were parsed, return the whole answer as one section
+    if not sections and visa_answer.strip():
+        sections["Information"] = visa_answer.strip()
+    
+    logger.info(f"Parsed {len(sections)} sections: {list(sections.keys())}")
+    
+    return sections
+
+def format_visa_sections_html(sections: Dict[str, str]) -> str:
+    """Format visa sections as professional HTML"""
+    html_parts = []
+    
+    for title, content in sections.items():
+        # Convert content to formatted HTML
+        formatted_content = format_content_to_html(content)
+        
+        html_parts.append(f"""
+        <div class="info-card">
+            <h2 class="card-title">{title}</h2>
+            <div class="card-content">
+                {formatted_content}
+            </div>
+        </div>
+        """)
+    
+    return "".join(html_parts)
+
+def format_content_to_html(content: str) -> str:
+    """Convert plain text content to formatted HTML"""
+    if not content:
+        return "<p>No information available.</p>"
+    
+    # Split into lines
+    lines = content.split('\n')
     formatted_lines = []
     in_list = False
     
@@ -399,20 +649,24 @@ def format_markdown_to_html(markdown_text: str) -> str:
                 formatted_lines.append('</ul>')
                 in_list = False
             continue
-            
-        if line.startswith('- ') or line.startswith('* '):
+        
+        # Check if it's a list item
+        if re.match(r'^[\-\*\•]\s', line) or re.match(r'^\d+[\.\)]\s', line):
             if not in_list:
                 formatted_lines.append('<ul>')
                 in_list = True
-            formatted_lines.append(f'<li>{line[2:]}</li>')
+            # Remove bullet/number and add as list item
+            item_text = re.sub(r'^[\-\*\•\d]+[\.\)]*\s*', '', line)
+            formatted_lines.append(f'<li>{item_text}</li>')
         else:
             if in_list:
                 formatted_lines.append('</ul>')
                 in_list = False
-            if not line.startswith('<h'):
-                formatted_lines.append(f'<p>{line}</p>')
+            # Bold any text that looks like a header or important
+            if re.match(r'^[A-Z][^:]{3,30}:$', line):
+                formatted_lines.append(f'<p><strong>{line}</strong></p>')
             else:
-                formatted_lines.append(line)
+                formatted_lines.append(f'<p>{line}</p>')
     
     if in_list:
         formatted_lines.append('</ul>')
@@ -425,6 +679,7 @@ def check_system_status():
     rag = CountrySpecificVisaRAG(config)
     
     print(f"🔍 System Status Check")
+    print(f"Embedding Model: {config.embeddings_model}")
     print(f"Countries available: {len(rag.country_mapping)}")
     print(f"Base vector store path: {config.base_vector_store_path}")
     print(f"Country mapping file: {config.country_mapping_file}")
@@ -432,7 +687,9 @@ def check_system_status():
     for key, info in list(rag.country_mapping.items())[:5]:
         store_path = Path(info['store_path'])
         status = "✅" if store_path.exists() else "❌"
-        print(f"  {status} {info['display_name']}: {info['chunk_count']} chunks")
+        arabic = info.get('arabic_chunks', 0)
+        english = info.get('english_chunks', 0)
+        print(f"  {status} {info['display_name']}: {info['chunk_count']} chunks ({arabic} AR, {english} EN)")
     
     if len(rag.country_mapping) > 5:
         print(f"  ... and {len(rag.country_mapping) - 5} more countries")
