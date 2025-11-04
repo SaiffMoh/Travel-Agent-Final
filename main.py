@@ -232,6 +232,19 @@ async def chat_endpoint(request: ChatRequest):
             print(f"✓ Updated conversation: {len(updated_conversation)} messages")
 
             # Use the previous_state already retrieved at the start
+            # ===== NEW CODE: DETECT BOOKING INTENT BEFORE GRAPH EXECUTION =====
+            from Utils.routing import detect_booking_intent
+            
+            is_booking, package_id = detect_booking_intent({
+                "current_message": user_message,
+                "user_message": user_message,
+                "booking_in_progress": previous_state.get("booking_in_progress", False)
+            })
+            
+            if is_booking and package_id:
+                logger.info(f"🎯 Pre-graph booking detection: Package {package_id} selected")
+            # ===== END NEW CODE =====
+            
             state = {
             "thread_id": request.thread_id,
             "conversation": updated_conversation,
@@ -255,7 +268,7 @@ async def chat_endpoint(request: ChatRequest):
             "visa_uploaded": previous_state.get("visa_uploaded", False),
             "visa_data": previous_state.get("visa_data", []),
             "booking_in_progress": previous_state.get("booking_in_progress", False),
-            "selected_package_id": previous_state.get("selected_package_id"),
+            "selected_package_id": package_id if is_booking else previous_state.get("selected_package_id"),
             
             # INVOICE STATE
             "invoice_uploaded": previous_state.get("invoice_uploaded", False),
@@ -273,7 +286,7 @@ async def chat_endpoint(request: ChatRequest):
                 print("ERROR: Graph was not compiled at startup")
                 raise HTTPException(status_code=500, detail="Graph compilation failed")
 
-            print(f"Executing Amadeus graph with state: {state}")
+            
             result = graph.invoke(state)
             
             print("✓ LangGraph execution completed")
@@ -341,6 +354,12 @@ async def chat_endpoint(request: ChatRequest):
                 conversation_store.add_message(request.thread_id, "assistant", "Visa requirements provided")
                 return result["visa_info_html"]
 
+            if result.get("booking_html"):
+                print("✓ Returning booking_html from Amadeus flow")
+                booking_status = "Booking confirmed" if result.get("booking_confirmed") else "Booking in progress"
+                conversation_store.add_message(request.thread_id, "assistant", booking_status)
+                return result["booking_html"]
+
             if result.get("needs_followup", True):
                 assistant_message = result.get("followup_question", "Could you provide more details about your flight?")
                 conversation_store.add_message(request.thread_id, "assistant", assistant_message)
@@ -356,11 +375,6 @@ async def chat_endpoint(request: ChatRequest):
                 conversation_store.add_message(request.thread_id, "assistant", assistant_message)
                 return result["travel_packages_html"]
 
-            if result.get("booking_html"):
-                print("✓ Returning booking_html from Amadeus flow")
-                booking_status = "Booking confirmed" if result.get("booking_confirmed") else "Booking in progress"
-                conversation_store.add_message(request.thread_id, "assistant", booking_status)
-                return result["booking_html"]
             
             flights = []
             if result.get("formatted_results"):
@@ -522,6 +536,7 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
     return "".join(all_html)
     
 # Add this endpoint after your existing endpoints
+# Add this endpoint after your existing endpoints in main.py
 @app.post("/api/passports/upload", response_class=HTMLResponse)
 async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
     """
@@ -600,18 +615,40 @@ async def upload_passports(files: List[UploadFile], thread_id: str = Form(...)):
         # Generate HTML from all passport data
         html_content = generate_passport_html(passports_data)
 
-        # Save state to conversation store so frontend can reference later
+        # CRITICAL FIX: Retrieve existing state to preserve travel_packages
+        current_state = conversation_store.get_state(thread_id) or {}
+        
+        logging.info(f"📦 Current state has {len(current_state.get('travel_packages', []))} packages")
+
+        # Save state - PRESERVE ALL TRAVEL DATA
         state_to_save = {
-            "passport_uploaded": True,  # Set flag
-            "passport_data": passports_data,  # Save extracted data
+            "passport_uploaded": True,
+            "passport_data": passports_data,
             "passport_html": html_content,
-            "passport_file_paths": saved_paths
+            "passport_file_paths": saved_paths,
+            # Preserve travel search data
+            "travel_packages": current_state.get("travel_packages", []),
+            "travel_packages_html": current_state.get("travel_packages_html"),
+            "departure_date": current_state.get("departure_date"),
+            "origin": current_state.get("origin"),
+            "destination": current_state.get("destination"),
+            "cabin_class": current_state.get("cabin_class"),
+            "duration": current_state.get("duration"),
+            # Preserve booking state
+            "booking_in_progress": current_state.get("booking_in_progress", False),
+            "selected_package_id": current_state.get("selected_package_id"),
+            # Preserve visa data if exists
+            "visa_uploaded": current_state.get("visa_uploaded", False),
+            "visa_data": current_state.get("visa_data", []),
         }
         conversation_store.save_state(thread_id, state_to_save)
+        
+        logging.info(f"✅ Saved state with {len(state_to_save.get('travel_packages', []))} packages preserved")
+        
         # If user is in booking flow, automatically trigger booking verification
-        current_state = conversation_store.get_state(thread_id) or {}
         if current_state.get("booking_in_progress"):
             logger.info("📦 User in booking flow - will auto-verify on next message")
+        
         # Add assistant message summarizing result
         summary_msg = "Passport data extracted" if any("error" not in p for p in passports_data) else "Passport extraction completed with errors"
         conversation_store.add_message(thread_id, "assistant", summary_msg)
@@ -719,17 +756,39 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
                     "error": f"Processing error: {str(e)}"
                 })
 
-        # CHANGE: Save with proper flags
+        # CRITICAL FIX: Retrieve existing state to preserve travel_packages
+        current_state = conversation_store.get_state(thread_id) or {}
+        
+        logging.info(f"📦 Current state has {len(current_state.get('travel_packages', []))} packages")
+
+        # Save with proper flags - PRESERVE travel_packages
         state_to_save = {
-            "visa_uploaded": True,  # Set flag
-            "visa_data": visas_data,  # Save extracted data
-            "visa_file_paths": saved_paths
+            "visa_uploaded": True,
+            "visa_data": visas_data,
+            "visa_file_paths": saved_paths,
+            # Preserve travel search data
+            "travel_packages": current_state.get("travel_packages", []),
+            "travel_packages_html": current_state.get("travel_packages_html"),
+            "departure_date": current_state.get("departure_date"),
+            "origin": current_state.get("origin"),
+            "destination": current_state.get("destination"),
+            "cabin_class": current_state.get("cabin_class"),
+            "duration": current_state.get("duration"),
+            # Preserve booking state
+            "booking_in_progress": current_state.get("booking_in_progress", False),
+            "selected_package_id": current_state.get("selected_package_id"),
+            # Preserve passport data if exists
+            "passport_uploaded": current_state.get("passport_uploaded", False),
+            "passport_data": current_state.get("passport_data", []),
         }
         conversation_store.save_state(thread_id, state_to_save)
+        
+        logging.info(f"✅ Saved state with {len(state_to_save.get('travel_packages', []))} packages preserved")
+        
         # If user is in booking flow, automatically trigger booking verification
-        current_state = conversation_store.get_state(thread_id) or {}
         if current_state.get("booking_in_progress"):
             logger.info("📦 User in booking flow - will auto-verify on next message")
+        
         # Generate HTML summary
         html_summary = generate_visa_html(visas_data)
 

@@ -1,6 +1,7 @@
 """
 Nodes/booking_node.py
 Handles package booking with passport and visa verification
+Clean, professional HTML outputs without colors
 """
 from Models.TravelSearchState import TravelSearchState
 from typing import Dict, Any
@@ -29,10 +30,27 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
     selected_package_id = state.get("selected_package_id")
     travel_packages = state.get("travel_packages", [])
     
+    # DEBUG: Log critical state information
+    logger.info(f"Thread ID: {thread_id}")
+    logger.info(f"Selected Package ID: {selected_package_id}")
+    logger.info(f"Travel Packages Count: {len(travel_packages)}")
+    if travel_packages:
+        logger.info(f"First Package Preview: {travel_packages[0].get('package_id', 'N/A')}")
+    else:
+        logger.error("❌ NO TRAVEL PACKAGES IN STATE!")
+    logger.info(f"Passport Uploaded: {state.get('passport_uploaded', False)}")
+    logger.info(f"Visa Uploaded: {state.get('visa_uploaded', False)}")
+    logger.info(f"Booking In Progress: {state.get('booking_in_progress', False)}")
+    logger.info(f"State Keys: {list(state.keys())[:10]}...")
+    
     # Check if we have packages to book
     if not travel_packages:
+        logger.error("❌ NO TRAVEL PACKAGES FOUND IN STATE!")
+        logger.error(f"Available state keys: {list(state.keys())}")
         state["booking_error"] = "No travel packages available for booking"
-        state["booking_html"] = generate_error_html("No packages available. Please search for travel packages first.")
+        state["booking_html"] = generate_error_html(
+            "No packages available. Please search for travel packages first."
+        )
         state["current_node"] = "booking"
         return state
     
@@ -54,8 +72,11 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
             break
     
     if not selected_package:
+        logger.error(f"❌ Package {selected_package_id} not found in {len(travel_packages)} packages")
         state["booking_error"] = f"Package {selected_package_id} not found"
-        state["booking_html"] = generate_error_html(f"Package {selected_package_id} not found. Please select a valid package.")
+        state["booking_html"] = generate_error_html(
+            f"Package {selected_package_id} not found. Please select a valid package."
+        )
         state["current_node"] = "booking"
         return state
     
@@ -69,18 +90,21 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
     passport_data = state.get("passport_data", [])
     visa_data = state.get("visa_data", [])
     
-    # Validate passport data (not just uploaded, but successfully extracted)
+    logger.info(f"Document data - Passports: {len(passport_data)}, Visas: {len(visa_data)}")
+    
+    # Validate passport data
     passport_valid = False
     if passport_uploaded and passport_data:
-        # Check if any passport has actual data (not just errors)
         passport_valid = any("error" not in p for p in passport_data)
+        logger.info(f"Passport validation: {passport_valid} ({len(passport_data)} documents)")
     
     # Validate visa data
     visa_valid = False
     if visa_uploaded and visa_data:
         visa_valid = any("error" not in v for v in visa_data)
+        logger.info(f"Visa validation: {visa_valid} ({len(visa_data)} documents)")
     
-    logger.info(f"Document status - Passport: {passport_valid}, Visa: {visa_valid}")
+    logger.info(f"Final document status - Passport: {passport_valid}, Visa: {visa_valid}")
     
     # Generate status HTML
     missing_documents = []
@@ -134,7 +158,7 @@ def generate_booking_reference() -> str:
 
 
 def generate_package_selection_html(packages: list) -> str:
-    """Generate HTML for package selection interface"""
+    """Generate clean, professional HTML for package selection"""
     
     html_parts = ["""
     <style>
@@ -142,82 +166,98 @@ def generate_package_selection_html(packages: list) -> str:
             max-width: 900px;
             margin: 0 auto;
             padding: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
         }
-        .booking-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 24px;
-            border-radius: 12px;
+        .section-header {
+            border-bottom: 2px solid #000;
+            padding-bottom: 12px;
             margin-bottom: 24px;
-            text-align: center;
         }
-        .package-selection-card {
-            background: white;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
+        .section-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: -0.5px;
+        }
+        .section-subtitle {
+            font-size: 14px;
+            margin: 4px 0 0 0;
+            opacity: 0.7;
+        }
+        .info-box {
+            border: 1px solid #ddd;
+            padding: 16px;
+            margin-bottom: 24px;
+            background: #fafafa;
+        }
+        .info-box p {
+            margin: 0;
+            font-size: 14px;
+        }
+        .package-card {
+            border: 1px solid #ddd;
             padding: 20px;
             margin-bottom: 16px;
-            transition: all 0.3s ease;
-            cursor: pointer;
+            position: relative;
         }
-        .package-selection-card:hover {
-            border-color: #667eea;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
-            transform: translateY(-2px);
+        .package-card.optimal {
+            border: 2px solid #000;
         }
-        .package-selection-card.optimal {
-            border-color: #10b981;
-            background: linear-gradient(to right, #ecfdf5, #ffffff);
+        .package-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .package-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0;
         }
         .optimal-badge {
-            background: #10b981;
-            color: white;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
+            font-size: 11px;
             font-weight: 600;
-            display: inline-block;
-            margin-left: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 4px 8px;
+            border: 1px solid #000;
+            background: #000;
+            color: #fff;
         }
-        .package-summary {
+        .package-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 16px;
-            margin-top: 16px;
         }
-        .summary-item {
+        .detail-item {
             display: flex;
             flex-direction: column;
         }
-        .summary-label {
-            font-size: 0.85em;
-            color: #6b7280;
+        .detail-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.6;
             margin-bottom: 4px;
+            font-weight: 500;
         }
-        .summary-value {
-            font-weight: 600;
-            color: #111827;
-        }
-        .instruction-box {
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 24px;
+        .detail-value {
+            font-size: 15px;
+            font-weight: 500;
         }
     </style>
     
     <div class="booking-container">
-        <div class="booking-header">
-            <h2 style="margin: 0 0 8px 0; font-size: 28px;">📦 Select Your Travel Package</h2>
-            <p style="margin: 0; opacity: 0.9;">Choose the package that best fits your travel needs</p>
+        <div class="section-header">
+            <h1 class="section-title">Select Travel Package</h1>
+            <p class="section-subtitle">Choose the package that best fits your needs</p>
         </div>
         
-        <div class="instruction-box">
-            <p style="margin: 0; color: #1e40af; font-weight: 500;">
-                💡 <strong>How to book:</strong> Reply with the package number you'd like to book (e.g., "book package 1" or just "package 1")
-            </p>
+        <div class="info-box">
+            <p><strong>How to book:</strong> Reply with the package number (e.g., "book package 1" or "package 1")</p>
         </div>
     """]
     
@@ -245,39 +285,39 @@ def generate_package_selection_html(packages: list) -> str:
         stops = outbound.get("stops", 0)
         stops_text = "Direct flight" if stops == 0 else f"{stops} stop(s)"
         
-        card_class = "package-selection-card optimal" if is_optimal else "package-selection-card"
+        card_class = "package-card optimal" if is_optimal else "package-card"
         
         html_parts.append(f"""
         <div class="{card_class}">
-            <h3 style="margin: 0 0 16px 0; color: #111827; font-size: 20px;">
-                Package {pkg_id}
-                {f'<span class="optimal-badge">⭐ Best Value</span>' if is_optimal else ''}
-            </h3>
+            <div class="package-header">
+                <h2 class="package-title">Package {pkg_id}</h2>
+                {f'<span class="optimal-badge">Best Value</span>' if is_optimal else ''}
+            </div>
             
-            <div class="package-summary">
-                <div class="summary-item">
-                    <span class="summary-label">📅 Duration</span>
-                    <span class="summary-value">{duration} night{'s' if duration != 1 else ''}</span>
+            <div class="package-grid">
+                <div class="detail-item">
+                    <span class="detail-label">Duration</span>
+                    <span class="detail-value">{duration} night{'s' if duration != 1 else ''}</span>
                 </div>
-                <div class="summary-item">
-                    <span class="summary-label">📆 Dates</span>
-                    <span class="summary-value">{checkin} to {checkout}</span>
+                <div class="detail-item">
+                    <span class="detail-label">Travel Dates</span>
+                    <span class="detail-value">{checkin} to {checkout}</span>
                 </div>
-                <div class="summary-item">
-                    <span class="summary-label">✈️ Flight</span>
-                    <span class="summary-value">{flight_price:,.2f} {flight_currency}</span>
+                <div class="detail-item">
+                    <span class="detail-label">Flight Price</span>
+                    <span class="detail-value">{flight_price:,.2f} {flight_currency}</span>
                 </div>
-                <div class="summary-item">
-                    <span class="summary-label">🏨 Hotels from</span>
-                    <span class="summary-value">{hotel_price:,.2f} {hotel_currency}</span>
+                <div class="detail-item">
+                    <span class="detail-label">Hotels From</span>
+                    <span class="detail-value">{hotel_price:,.2f} {hotel_currency}</span>
                 </div>
-                <div class="summary-item">
-                    <span class="summary-label">🛫 Flight Type</span>
-                    <span class="summary-value">{stops_text}</span>
+                <div class="detail-item">
+                    <span class="detail-label">Flight Type</span>
+                    <span class="detail-value">{stops_text}</span>
                 </div>
-                <div class="summary-item">
-                    <span class="summary-label">🏨 Hotels Available</span>
-                    <span class="summary-value">{available_hotels} options</span>
+                <div class="detail-item">
+                    <span class="detail-label">Hotels Available</span>
+                    <span class="detail-value">{available_hotels} options</span>
                 </div>
             </div>
         </div>
@@ -290,7 +330,7 @@ def generate_package_selection_html(packages: list) -> str:
 
 def generate_document_request_html(package: dict, passport_valid: bool, visa_valid: bool, 
                                    passport_data: list = None, visa_data: list = None) -> str:
-    """Generate HTML showing selected package and requesting missing documents"""
+    """Generate clean HTML showing selected package and requesting documents"""
     
     pkg_id = package.get("package_id", 0)
     travel_dates = package.get("travel_dates", {})
@@ -308,93 +348,133 @@ def generate_document_request_html(package: dict, passport_valid: bool, visa_val
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
         }}
-        .selected-package {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 24px;
-            border-radius: 12px;
+        .section-header {{
+            border-bottom: 2px solid #000;
+            padding-bottom: 12px;
             margin-bottom: 24px;
         }}
-        .document-status {{
-            background: white;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 24px;
+        .section-title {{
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: -0.5px;
+        }}
+        .section-subtitle {{
+            font-size: 14px;
+            margin: 4px 0 0 0;
+            opacity: 0.7;
+        }}
+        .info-card {{
+            border: 1px solid #ddd;
+            padding: 20px;
             margin-bottom: 16px;
+        }}
+        .card-title {{
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0 0 16px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 12px;
+        }}
+        .status-list {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
         }}
         .status-item {{
             display: flex;
             align-items: center;
-            padding: 16px;
-            border-radius: 8px;
-            margin-bottom: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
         }}
-        .status-item.complete {{
-            background: #ecfdf5;
-            border: 1px solid #10b981;
-        }}
-        .status-item.incomplete {{
-            background: #fef2f2;
-            border: 1px solid #ef4444;
+        .status-item:last-child {{
+            border-bottom: none;
         }}
         .status-icon {{
-            font-size: 24px;
-            margin-right: 16px;
+            margin-right: 12px;
+            font-size: 18px;
         }}
-        .warning-box {{
-            background: #fef3c7;
-            border: 2px solid #f59e0b;
-            border-radius: 8px;
+        .status-content {{
+            flex: 1;
+        }}
+        .status-title {{
+            font-weight: 600;
+            margin: 0 0 4px 0;
+        }}
+        .status-description {{
+            font-size: 13px;
+            opacity: 0.7;
+            margin: 0;
+        }}
+        .alert-box {{
+            border: 2px solid #000;
             padding: 20px;
             margin-top: 16px;
+            background: #fafafa;
+        }}
+        .alert-title {{
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            font-size: 16px;
+        }}
+        .alert-text {{
+            margin: 0 0 12px 0;
+            font-size: 14px;
+        }}
+        .required-list {{
+            margin: 12px 0;
+            padding-left: 20px;
+        }}
+        .required-list li {{
+            margin-bottom: 8px;
         }}
     </style>
     
     <div class="booking-container">
-        <div class="selected-package">
-            <h2 style="margin: 0 0 8px 0; font-size: 24px;">✅ Package {pkg_id} Selected</h2>
-            <p style="margin: 0; opacity: 0.9; font-size: 14px;">
-                {duration} nights: {checkin} to {checkout} • Flight: {flight_price:,.2f} {flight_currency}
-            </p>
+        <div class="section-header">
+            <h1 class="section-title">Package {pkg_id} Selected</h1>
+            <p class="section-subtitle">{duration} nights: {checkin} to {checkout} • Flight: {flight_price:,.2f} {flight_currency}</p>
         </div>
         
-        <div class="document-status">
-            <h3 style="margin: 0 0 20px 0; color: #111827;">📋 Document Verification Status</h3>
+        <div class="info-card">
+            <h2 class="card-title">Document Verification Status</h2>
             
-            <div class="status-item {'complete' if passport_valid else 'incomplete'}">
-                <span class="status-icon">{'✅' if passport_valid else '❌'}</span>
-                <div style="flex: 1;">
-                    <div style="font-weight: 600; color: #111827; margin-bottom: 4px;">Passport</div>
-                    <div style="font-size: 0.9em; color: #6b7280;">
-                        {f'Verified ({len(passport_data)} document(s))' if passport_valid else 'Not uploaded or invalid'}
+            <ul class="status-list">
+                <li class="status-item">
+                    <span class="status-icon">{'✓' if passport_valid else '✗'}</span>
+                    <div class="status-content">
+                        <p class="status-title">Passport</p>
+                        <p class="status-description">
+                            {f'Verified ({len(passport_data)} document(s))' if passport_valid else 'Not uploaded or invalid'}
+                        </p>
                     </div>
-                </div>
-            </div>
-            
-            <div class="status-item {'complete' if visa_valid else 'incomplete'}">
-                <span class="status-icon">{'✅' if visa_valid else '❌'}</span>
-                <div style="flex: 1;">
-                    <div style="font-weight: 600; color: #111827; margin-bottom: 4px;">Visa</div>
-                    <div style="font-size: 0.9em; color: #6b7280;">
-                        {f'Verified ({len(visa_data)} document(s))' if visa_valid else 'Not uploaded or invalid'}
+                </li>
+                
+                <li class="status-item">
+                    <span class="status-icon">{'✓' if visa_valid else '✗'}</span>
+                    <div class="status-content">
+                        <p class="status-title">Visa</p>
+                        <p class="status-description">
+                            {f'Verified ({len(visa_data)} document(s))' if visa_valid else 'Not uploaded or invalid'}
+                        </p>
                     </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="warning-box">
-            <h4 style="margin: 0 0 12px 0; color: #92400e; font-size: 18px;">⚠️ Action Required</h4>
-            <p style="margin: 0 0 12px 0; color: #78350f; line-height: 1.6;">
-                To complete your booking, please upload the following document(s):
-            </p>
-            <ul style="margin: 0; padding-left: 20px; color: #78350f;">
-                {f'<li><strong>Passport</strong> - Valid travel document required</li>' if not passport_valid else ''}
-                {f'<li><strong>Visa</strong> - Valid visa document required</li>' if not visa_valid else ''}
+                </li>
             </ul>
-            <p style="margin: 16px 0 0 0; color: #78350f; font-size: 0.9em; font-style: italic;">
-                Once you upload the required documents, I'll automatically verify them and confirm your booking.
+        </div>
+        
+        <div class="alert-box">
+            <h3 class="alert-title">Action Required</h3>
+            <p class="alert-text">To complete your booking, please upload the following document(s):</p>
+            <ul class="required-list">
+                {f'<li><strong>Passport</strong> — Valid travel document required</li>' if not passport_valid else ''}
+                {f'<li><strong>Visa</strong> — Valid visa document required</li>' if not visa_valid else ''}
+            </ul>
+            <p class="alert-text" style="font-size: 13px; opacity: 0.8; font-style: italic; margin-top: 16px;">
+                Once you upload the required documents, the system will automatically verify them and confirm your booking.
             </p>
         </div>
     </div>
@@ -404,7 +484,7 @@ def generate_document_request_html(package: dict, passport_valid: bool, visa_val
 
 
 def generate_booking_confirmation_html(package: dict, passport_data: list, visa_data: list, booking_ref: str) -> str:
-    """Generate HTML for confirmed booking"""
+    """Generate clean HTML for booking confirmation"""
     
     pkg_id = package.get("package_id", 0)
     travel_dates = package.get("travel_dates", {})
@@ -434,69 +514,102 @@ def generate_booking_confirmation_html(package: dict, passport_data: list, visa_
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
         }}
-        .confirmation-header {{
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
+        .confirmation-banner {{
+            border: 3px solid #000;
             padding: 32px;
-            border-radius: 12px;
             margin-bottom: 24px;
             text-align: center;
+            background: #fafafa;
         }}
-        .booking-ref {{
-            background: rgba(255, 255, 255, 0.2);
-            padding: 12px 24px;
-            border-radius: 8px;
-            display: inline-block;
-            margin-top: 16px;
-            font-family: monospace;
+        .confirmation-icon {{
+            font-size: 48px;
+            margin-bottom: 16px;
+        }}
+        .confirmation-title {{
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+            letter-spacing: -0.5px;
+        }}
+        .confirmation-subtitle {{
+            font-size: 14px;
+            margin: 0 0 20px 0;
+            opacity: 0.7;
+        }}
+        .booking-reference {{
+            font-family: 'Courier New', monospace;
             font-size: 20px;
             font-weight: 700;
             letter-spacing: 2px;
+            padding: 12px 24px;
+            border: 2px solid #000;
+            display: inline-block;
+            background: #fff;
         }}
-        .info-card {{
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 24px;
+        .info-section {{
+            border: 1px solid #ddd;
+            padding: 20px;
             margin-bottom: 16px;
+        }}
+        .section-title {{
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 16px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #ddd;
+        }}
+        .info-table {{
+            width: 100%;
+            border-collapse: collapse;
         }}
         .info-row {{
             display: flex;
             justify-content: space-between;
-            padding: 12px 0;
-            border-bottom: 1px solid #f3f4f6;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
         }}
         .info-row:last-child {{
             border-bottom: none;
         }}
         .info-label {{
-            color: #6b7280;
-            font-weight: 500;
+            opacity: 0.6;
+            font-size: 14px;
         }}
         .info-value {{
-            color: #111827;
             font-weight: 600;
+            font-size: 14px;
         }}
-        .success-icon {{
-            font-size: 64px;
-            margin-bottom: 16px;
+        .notice-box {{
+            border: 1px solid #ddd;
+            padding: 20px;
+            text-align: center;
+            background: #fafafa;
+            margin-top: 16px;
+        }}
+        .notice-box p {{
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.6;
         }}
     </style>
     
     <div class="booking-container">
-        <div class="confirmation-header">
-            <div class="success-icon">🎉</div>
-            <h2 style="margin: 0 0 8px 0; font-size: 32px;">Booking Confirmed!</h2>
-            <p style="margin: 0; opacity: 0.9;">Your travel package has been successfully booked</p>
-            <div class="booking-ref">{booking_ref}</div>
+        <div class="confirmation-banner">
+            <div class="confirmation-icon">✓</div>
+            <h1 class="confirmation-title">Booking Confirmed</h1>
+            <p class="confirmation-subtitle">Your travel package has been successfully booked</p>
+            <div class="booking-reference">{booking_ref}</div>
         </div>
         
-        <div class="info-card">
-            <h3 style="margin: 0 0 16px 0; color: #111827;">👤 Traveler Information</h3>
+        <div class="info-section">
+            <h2 class="section-title">Traveler Information</h2>
             <div class="info-row">
-                <span class="info-label">Name</span>
+                <span class="info-label">Full Name</span>
                 <span class="info-value">{traveler_name}</span>
             </div>
             <div class="info-row">
@@ -504,13 +617,13 @@ def generate_booking_confirmation_html(package: dict, passport_data: list, visa_
                 <span class="info-value">{passport_number}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Documents Verified</span>
-                <span class="info-value">✅ Passport & Visa</span>
+                <span class="info-label">Documents</span>
+                <span class="info-value">Passport & Visa Verified</span>
             </div>
         </div>
         
-        <div class="info-card">
-            <h3 style="margin: 0 0 16px 0; color: #111827;">📦 Package Details</h3>
+        <div class="info-section">
+            <h2 class="section-title">Package Details</h2>
             <div class="info-row">
                 <span class="info-label">Package ID</span>
                 <span class="info-value">Package {pkg_id}</span>
@@ -520,17 +633,17 @@ def generate_booking_confirmation_html(package: dict, passport_data: list, visa_
                 <span class="info-value">{duration} night{'s' if duration != 1 else ''}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Check-in</span>
+                <span class="info-label">Check-in Date</span>
                 <span class="info-value">{checkin}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Check-out</span>
+                <span class="info-label">Check-out Date</span>
                 <span class="info-value">{checkout}</span>
             </div>
         </div>
         
-        <div class="info-card">
-            <h3 style="margin: 0 0 16px 0; color: #111827;">💰 Pricing Summary</h3>
+        <div class="info-section">
+            <h2 class="section-title">Pricing Summary</h2>
             <div class="info-row">
                 <span class="info-label">Flight</span>
                 <span class="info-value">{flight_price:,.2f} {flight_currency}</span>
@@ -541,9 +654,9 @@ def generate_booking_confirmation_html(package: dict, passport_data: list, visa_
             </div>
         </div>
         
-        <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; text-align: center;">
-            <p style="margin: 0; color: #1e40af; line-height: 1.6;">
-                📧 A confirmation email has been sent to your registered email address.<br>
+        <div class="notice-box">
+            <p>
+                A confirmation email has been sent to your registered email address.<br>
                 Please keep your booking reference <strong>{booking_ref}</strong> for future correspondence.
             </p>
         </div>
@@ -554,13 +667,42 @@ def generate_booking_confirmation_html(package: dict, passport_data: list, visa_
 
 
 def generate_error_html(message: str) -> str:
-    """Generate error HTML"""
+    """Generate clean error HTML"""
     return f"""
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: #fef2f2; border: 2px solid #ef4444; border-radius: 12px; padding: 24px; text-align: center;">
-            <div style="font-size: 48px; margin-bottom: 16px;">❌</div>
-            <h3 style="margin: 0 0 12px 0; color: #991b1b; font-size: 20px;">Booking Error</h3>
-            <p style="margin: 0; color: #7f1d1d; line-height: 1.6;">{message}</p>
+    <style>
+        .error-container {{
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }}
+        .error-box {{
+            border: 2px solid #000;
+            padding: 32px;
+            text-align: center;
+            background: #fafafa;
+        }}
+        .error-icon {{
+            font-size: 48px;
+            margin-bottom: 16px;
+        }}
+        .error-title {{
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+        }}
+        .error-message {{
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.6;
+        }}
+    </style>
+    
+    <div class="error-container">
+        <div class="error-box">
+            <div class="error-icon">✗</div>
+            <h3 class="error-title">Booking Error</h3>
+            <p class="error-message">{message}</p>
         </div>
     </div>
     """

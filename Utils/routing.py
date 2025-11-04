@@ -87,46 +87,68 @@ def detect_booking_intent(state: TravelSearchState) -> tuple[bool, int | None]:
 
 def detect_document_upload_completion(state: TravelSearchState) -> bool:
     """
-    Check if user just completed uploading documents while in booking flow.
-    This helps auto-route back to booking after uploads.
+    Check if user JUST completed uploading documents while in booking flow.
+    This is only True immediately after the upload, not on subsequent messages.
+    
+    CRITICAL: This should ONLY return True when the current message indicates
+    a file upload just happened (not a text message like "package 3").
     """
     booking_in_progress = state.get("booking_in_progress", False)
     
     if not booking_in_progress:
         return False
     
-    # Check if documents were recently uploaded
+    # Check current message - if it's a normal text message, this is NOT an upload
+    current_message = state.get("current_message") or state.get("user_message", "")
+    message_lower = current_message.lower()
+    
+    # If message contains booking/package keywords, it's a selection, not an upload
+    if any(keyword in message_lower for keyword in ["package", "book", "select", "choose"]):
+        return False
+    
+    # If message contains a number, it's likely a package selection
+    if re.search(r'\b\d+\b', message_lower):
+        return False
+    
+    # Check if documents were recently uploaded AND the message indicates an upload
     passport_uploaded = state.get("passport_uploaded", False)
     visa_uploaded = state.get("visa_uploaded", False)
     
-    # If we're in booking flow and both documents are now uploaded, 
-    # we should return to booking
-    return passport_uploaded and visa_uploaded
+    # Only return True if BOTH are uploaded AND message suggests file upload context
+    # (e.g., "Uploaded X passport file(s)" or "Processing uploaded invoice")
+    is_upload_context = "uploaded" in message_lower or "processing" in message_lower
+    
+    return passport_uploaded and visa_uploaded and is_upload_context
 
 
 def smart_router(state: TravelSearchState) -> str:
     """
     Enhanced smart routing with booking flow support.
     Priority order:
-    1. Document upload completion (if in booking flow) - route back to booking
-    2. Booking requests (explicit or in-progress)
+    1. Booking requests (explicit package selection has HIGHEST priority)
+    2. Document upload completion (if in booking flow) - route back to booking
     3. Visa inquiries (can interrupt any flow)
     4. Invoice extraction
     5. Travel search
     6. General conversation
+    
+    NOTE: This router only returns routing decisions.
+    State modifications (like setting selected_package_id) must happen in main.py
+    before graph invocation, as routers cannot modify state in LangGraph.
     """
     
-    # FIRST: Check if we just completed document uploads during booking
-    if detect_document_upload_completion(state):
-        print("Router: Document upload completed during booking - returning to booking verification")
-        return "booking"
-    
-    # SECOND: Check for booking intent
+    # FIRST: Check for booking intent (HIGHEST PRIORITY for package selection)
     is_booking, package_id = detect_booking_intent(state)
     if is_booking:
         print(f"Router: Booking intent detected - Package ID: {package_id}")
-        if package_id:
-            state["selected_package_id"] = package_id
+        # Note: selected_package_id should be set in main.py before graph invocation
+        # Router functions cannot modify state in LangGraph
+        return "booking"
+    
+    # SECOND: Check if we just completed document uploads during booking
+    # (This now only triggers on actual uploads, not text messages)
+    if detect_document_upload_completion(state):
+        print("Router: Document upload completed during booking - returning to booking verification")
         return "booking"
     
     # THIRD: Check for visa inquiry (can interrupt any flow)
