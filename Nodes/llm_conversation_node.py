@@ -2,7 +2,7 @@ import json
 import os
 import re  # Added import
 from Models.TravelSearchState import TravelSearchState
-from langchain.schema import HumanMessage
+from langchain_core.messages import HumanMessage
 from Utils.watson_config import llm
 from Prompts.llm_conversation import build_input_extraction_prompt
 import logging
