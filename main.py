@@ -54,6 +54,14 @@ PDF_DIR = UPLOAD_DIR / "pdfs"
 JSON_DIR = UPLOAD_DIR / "json_outputs"
 PASSPORT_DIR = UPLOAD_DIR / "passports"
 
+# 🔥 AUTO-RESET ALL STATES ON STARTUP
+print("\n" + "="*60)
+print("🔄 CLEARING ALL CACHED STATES ON STARTUP")
+print("="*60)
+reset_stats = conversation_store.reset_all()
+print(f"✅ Cleared {reset_stats['states_cleared']} state(s)")
+print(f"✅ Cleared {reset_stats['conversations_cleared']} conversation(s)")
+print("="*60 + "\n")
 
 # Create directories if they don't exist
 for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR]:
@@ -75,7 +83,23 @@ async def health():
             "missing_keys": missing_keys
         }
     return {"status": "healthy", "message": "All API keys configured"}
-
+@app.post("/api/reset-all")
+async def reset_all_conversations():
+    """🔥 RESET ALL CONVERSATIONS AND STATES - Use with caution!"""
+    print("🔥 RESETTING ALL CONVERSATIONS AND STATES")
+    reset_stats = conversation_store.reset_all()
+    return {
+        "message": "All conversations and states have been reset",
+        "states_cleared": reset_stats["states_cleared"],
+        "conversations_cleared": reset_stats["conversations_cleared"]
+    }
+@app.post("/api/reset/{thread_id}")
+async def reset_conversation(thread_id: str):
+    """Reset conversation history for a specific thread"""
+    print(f"Resetting conversation for thread: {thread_id}")
+    conversation_store.clear_conversation(thread_id)
+    conversation_store.clear_state(thread_id)
+    return {"message": f"Conversation for thread {thread_id} has been reset"}
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     """

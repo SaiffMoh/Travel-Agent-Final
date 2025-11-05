@@ -54,6 +54,27 @@ class ConversationStore:
         """Clear state for a thread"""
         if thread_id in self._states:
             del self._states[thread_id]
+    
+    def clear_all_states(self) -> int:
+        """Clear all states and return count of cleared threads"""
+        count = len(self._states)
+        self._states.clear()
+        return count
+    
+    def clear_all_conversations(self) -> int:
+        """Clear all conversations and return count of cleared threads"""
+        count = len(self._conversations)
+        self._conversations.clear()
+        return count
+    
+    def reset_all(self) -> Dict[str, int]:
+        """Reset everything and return statistics"""
+        states_cleared = self.clear_all_states()
+        conversations_cleared = self.clear_all_conversations()
+        return {
+            "states_cleared": states_cleared,
+            "conversations_cleared": conversations_cleared
+        }
 
 # Global conversation store instance
 conversation_store = ConversationStore()
