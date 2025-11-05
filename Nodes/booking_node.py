@@ -49,7 +49,7 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
         logger.error(f"Available state keys: {list(state.keys())}")
         state["booking_error"] = "No travel packages available for booking"
         state["booking_html"] = generate_error_html(
-            "No packages available. Please search for travel packages first."
+            "You need to search for packages first. search for flights offers first!"
         )
         state["current_node"] = "booking"
         return state
@@ -701,7 +701,6 @@ def generate_error_html(message: str) -> str:
     <div class="error-container">
         <div class="error-box">
             <div class="error-icon">✗</div>
-            <h3 class="error-title">Booking Error</h3>
             <p class="error-message">{message}</p>
         </div>
     </div>
