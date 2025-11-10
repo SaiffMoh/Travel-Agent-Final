@@ -156,7 +156,6 @@ def process_passport_file_json(file_path: str) -> dict:
             "NameInPassport": str,
             "PassportNum": str,
             "ExpiryDate": str,
-            "NationalID": str,
             "error": str (optional, if processing failed)
         }
     """
@@ -214,7 +213,6 @@ def process_passport_file_json(file_path: str) -> dict:
                         "NameInPassport": parsed.get('full_name', ''),
                         "PassportNum": parsed.get('passport_number', ''),
                         "ExpiryDate": parsed.get('expiry_date', ''),
-                        "NationalID": parsed.get('nationality', '')
                     }
             except Exception as e:
                 logger.error(f"Error parsing barcode: {e}")
