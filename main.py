@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, UploadFile, Form  # Added Form
+from fastapi import FastAPI, HTTPException, UploadFile, Form, File  # Added Form
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import tempfile
 from dotenv import load_dotenv
 from langgraph.errors import GraphRecursionError
 from typing import List
@@ -8,12 +9,13 @@ import traceback
 import logging
 from Utils.question_to_html import question_to_html
 from Utils.passport_decoder import generate_passport_html, process_passport_file
+from Utils.passport_decoder_json import process_passport_file_json
 from graph import create_travel_graph
 from Models.ChatRequest import ChatRequest
 from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
-from Nodes.invoice_extraction_node import invoice_extraction_node
+from Nodes.invoice_extraction_json import invoice_extraction_json
 from fastapi.responses import HTMLResponse
 from Nodes.visa_rag_node import visa_rag_node
 from pathlib import Path
@@ -823,3 +825,120 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
         logging.error(f"Unexpected error in /api/visas/upload: {e}")
         traceback.print_exc()
         return HTMLResponse(content=f"<div>An unexpected error occurred: {str(e)}</div>", status_code=500)
+
+
+
+@app.post("/extract_invoice2")
+async def extract_invoice(
+    file: UploadFile = File(...),
+    thread_id: str = "default"
+):
+    """
+    Extract structured invoice data from an uploaded PDF file.
+    
+    Parameters:
+    - file: PDF file to process
+    - thread_id: Optional thread identifier (default: "default")
+    
+    Returns:
+    - JSON object containing extracted invoice data
+    """
+    # Validate file type
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are supported"
+        )
+    
+    # Create temporary file to save uploaded PDF
+    temp_file = None
+    try:
+        # Create temp file with proper extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            # Copy uploaded file to temp location
+            shutil.copyfileobj(file.file, temp_file)
+            temp_path = temp_file.name
+        
+        logger.info(f"Processing file: {file.filename}, thread_id: {thread_id}")
+        
+        # Extract invoice data
+        invoice_data = invoice_extraction_json(temp_path, thread_id)
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "filename": file.filename,
+                "thread_id": thread_id,
+                "data": invoice_data
+            }
+        )
+    
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse LLM response: {str(e)}"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error processing invoice: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing invoice: {str(e)}"
+        )
+    
+    finally:
+        # Clean up temporary file
+        if temp_file and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+                logger.info(f"Cleaned up temp file: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file: {e}")
+
+@app.post("/extract_passport2")
+async def extract_passport(file: UploadFile = File(...)):
+    """
+    Extract passport information from uploaded passport image or PDF.
+    
+    Returns JSON with:
+    - NameInPassport: Full name from passport
+    - PassportNum: Passport number
+    - ExpiryDate: Expiry date (YYYY-MM-DD)
+    - NationalID: Nationality code
+    """
+    # Validate file type
+    allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']
+    file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+        )
+    
+    # Save uploaded file temporarily
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        # Process the passport file
+        result = process_passport_file_json(tmp_file_path)
+        
+        # Clean up temp file
+        os.unlink(tmp_file_path)
+        
+        # Return error with 400 status if processing failed
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in API endpoint: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
