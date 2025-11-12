@@ -839,122 +839,142 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
         return HTMLResponse(content=f"<div>An unexpected error occurred: {str(e)}</div>", status_code=500)
 
 
+MAX_FILES = 10
+MAX_FILE_SIZE_MB = 2
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 @app.post("/extract_invoices_details")
 async def extract_invoices_details(
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     thread_id: str = "default",
-    api_key: str = Depends(verify_api_key)
+    #api_key: str = Depends(verify_api_key)
 ):
     """
-    Extract structured invoice data from an uploaded PDF file.
-    
-    Parameters:
-    - file: PDF file to process
-    - thread_id: Optional thread identifier (default: "default")
-    
-    Returns:
-    - JSON object containing extracted invoice data
+    Extract structured invoice data from uploaded PDF files.
+    Accepts up to 10 files, each ≤ 2 MB.
     """
-    # Validate file type
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are supported"
-        )
-    
-    # Create temporary file to save uploaded PDF
-    temp_file = None
-    try:
-        # Create temp file with proper extension
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-            # Copy uploaded file to temp location
-            shutil.copyfileobj(file.file, temp_file)
-            temp_path = temp_file.name
-        
-        logger.info(f"Processing file: {file.filename}, thread_id: {thread_id}")
-        
-        # Extract invoice data
-        invoice_data = invoice_extraction_json(temp_path, thread_id)
-        
-        return JSONResponse(
-            content={
-                "success": True,
+    if len(files) > MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Too many files uploaded. Maximum is {MAX_FILES}.")
+
+    results = []
+
+    for file in files:
+        if not file.filename.lower().endswith(".pdf"):
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": "Only PDF files are supported."
+            })
+            continue
+
+        # Validate file size
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+        if size > MAX_FILE_SIZE_BYTES:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
+            })
+            continue
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                shutil.copyfileobj(file.file, tmp)
+                temp_path = tmp.name
+
+            logger.info(f"Processing invoice file: {file.filename}")
+            data = invoice_extraction_json(temp_path, thread_id)
+            results.append({
                 "filename": file.filename,
                 "thread_id": thread_id,
-                "data": invoice_data
-            }
-        )
-    
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to parse LLM response: {str(e)}"
-        )
-    
-    except Exception as e:
-        logger.error(f"Error processing invoice: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing invoice: {str(e)}"
-        )
-    
-    finally:
-        # Clean up temporary file
-        if temp_file and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-                logger.info(f"Cleaned up temp file: {temp_path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete temp file: {e}")
+                "success": True,
+                "data": data
+            })
 
+        except json.JSONDecodeError as e:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": f"JSON parsing error: {e}"
+            })
+        except Exception as e:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": str(e)
+            })
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    return JSONResponse(content={"success": True, "total_files": len(results), "results": results})
+
+
+# ------------------------------------------------------------
+# Endpoint 2: Extract Passports Details (PDF or Image)
+# ------------------------------------------------------------
 @app.post("/extract_passports_details")
 async def extract_passports_details(
-    file: UploadFile = File(...),
-    api_key: str = Depends(verify_api_key)
+    files: list[UploadFile] = File(...),
+    #api_key: str = Depends(verify_api_key)
 ):
     """
-    Extract passport information from uploaded passport image or PDF.
-    
-    Returns JSON with:
-    - NameInPassport: Full name from passport
-    - PassportNum: Passport number
-    - ExpiryDate: Expiry date (YYYY-MM-DD)
-    - NationalID: Nationality code
+    Extract passport information from uploaded images or PDFs.
+    Accepts up to 10 files, each ≤ 2 MB.
     """
-    # Validate file type
-    allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']
-    file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
-    
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
-        )
-    
-    # Save uploaded file temporarily
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
-        
-        # Process the passport file
-        result = process_passport_file_json(tmp_file_path)
-        
-        # Clean up temp file
-        os.unlink(tmp_file_path)
-        
-        # Return error with 400 status if processing failed
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
-        
-        return JSONResponse(content=result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in API endpoint: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    allowed_ext = ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']
+
+    if len(files) > MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Too many files uploaded. Maximum is {MAX_FILES}.")
+
+    results = []
+
+    for file in files:
+        ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        if ext not in allowed_ext:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": f"Unsupported file type. Allowed: {', '.join(allowed_ext)}"
+            })
+            continue
+
+        # Validate file size
+        file.file.seek(0, os.SEEK_END)
+        size = file.file.tell()
+        file.file.seek(0)
+        if size > MAX_FILE_SIZE_BYTES:
+            results.append({
+                "filename": file.filename,
+                "success": False,
+                "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
+            })
+            continue
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+                content = await file.read()
+                tmp.write(content)
+                temp_path = tmp.name
+
+            logger.info(f"Processing passport file: {file.filename}")
+            data = process_passport_file_json(temp_path)
+            if "error" in data:
+                results.append({"filename": file.filename, "success": False, "error": data["error"]})
+            else:
+                results.append({"filename": file.filename, "success": True, "data": data})
+
+        except Exception as e:
+            logger.error(f"Error processing {file.filename}: {e}")
+            traceback.print_exc()
+            results.append({"filename": file.filename, "success": False, "error": str(e)})
+
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    return JSONResponse(content={"success": True, "total_files": len(results), "results": results})
