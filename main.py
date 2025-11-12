@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, Form, File  # Added Form
+from fastapi import FastAPI, HTTPException, UploadFile, Form, File, Depends, Header  # Added Form
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import tempfile
@@ -16,7 +16,7 @@ from Models.ExtractedInfo import ExtractedInfo
 from Models.FlightResult import FlightResult
 from Models.ConversationStore import conversation_store
 from Nodes.invoice_extraction_json import invoice_extraction_json
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from Nodes.visa_rag_node import visa_rag_node
 from pathlib import Path
 import shutil
@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-required_keys = ["OPENAI_API_KEY", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET"]
+API_KEY = os.getenv("API_KEY")
+
+required_keys = ["OPENAI_API_KEY", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "API_KEY"]
 for key in required_keys:
     value = os.getenv(key)
     if not value:
@@ -70,6 +72,16 @@ for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 graph = create_travel_graph().compile()
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if not API_KEY:
+        logger.error("API_KEY not configured in environment")
+        raise HTTPException(status_code=500, detail="Server configuration error")
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key missing")
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key
 
 @app.get("/")
 async def root():
@@ -828,10 +840,11 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
 
 
 
-@app.post("/extract_invoice2")
-async def extract_invoice(
+@app.post("/extract_invoices_details")
+async def extract_invoices_details(
     file: UploadFile = File(...),
-    thread_id: str = "default"
+    thread_id: str = "default",
+    api_key: str = Depends(verify_api_key)
 ):
     """
     Extract structured invoice data from an uploaded PDF file.
@@ -896,8 +909,11 @@ async def extract_invoice(
             except Exception as e:
                 logger.warning(f"Failed to delete temp file: {e}")
 
-@app.post("/extract_passport2")
-async def extract_passport(file: UploadFile = File(...)):
+@app.post("/extract_passports_details")
+async def extract_passports_details(
+    file: UploadFile = File(...),
+    api_key: str = Depends(verify_api_key)
+):
     """
     Extract passport information from uploaded passport image or PDF.
     
