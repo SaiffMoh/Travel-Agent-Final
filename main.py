@@ -24,6 +24,8 @@ import uuid
 import json
 from Nodes.web_search_node import web_search_node
 from Nodes.greeting_conversation_node import greeting_conversation_node
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -843,79 +845,106 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
         return HTMLResponse(content=f"<div>An unexpected error occurred: {str(e)}</div>", status_code=500)
 
 
+# Keep your constants
 MAX_FILES = 10
 MAX_FILE_SIZE_MB = 2
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-@app.post("/extract_invoices_details")
-async def extract_invoices_details(
-    files: list[UploadFile] = File(...),
-    thread_id: str = "default",
-    #api_key: str = Depends(verify_api_key)
-):
-    """
-    Extract structured invoice data from uploaded PDF files.
-    Accepts up to 10 files, each ≤ 2 MB.
-    """
-    if len(files) > MAX_FILES:
-        raise HTTPException(status_code=400, detail=f"Too many files uploaded. Maximum is {MAX_FILES}.")
+# Global thread pool (reuse across requests)
+executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
 
-    results = []
+async def _process_single_file(file: UploadFile, thread_id: str) -> dict:
+    """Process one file in a thread (non-blocking for CPU-heavy work)"""
+    if not file.filename.lower().endswith(".pdf"):
+        return {
+            "filename": file.filename,
+            "success": False,
+            "error": "Only PDF files are supported."
+        }
 
-    for file in files:
-        if not file.filename.lower().endswith(".pdf"):
-            results.append({
-                "filename": file.filename,
-                "success": False,
-                "error": "Only PDF files are supported."
-            })
-            continue
+    # Check size efficiently
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        return {
+            "filename": file.filename,
+            "success": False,
+            "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
+        }
 
-        # Validate file size
-        file.file.seek(0, os.SEEK_END)
-        size = file.file.tell()
-        file.file.seek(0)
-        if size > MAX_FILE_SIZE_BYTES:
-            results.append({
-                "filename": file.filename,
-                "success": False,
-                "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
-            })
-            continue
-
+    # Write to temp file in thread (avoid blocking event loop)
+    def extract_sync():
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                shutil.copyfileobj(file.file, tmp)
+                tmp.write(content)
                 temp_path = tmp.name
 
             logger.info(f"Processing invoice file: {file.filename}")
             data = invoice_extraction_json(temp_path, thread_id)
-            results.append({
+            return {
                 "filename": file.filename,
                 "thread_id": thread_id,
                 "success": True,
                 "data": data
-            })
-
+            }
         except json.JSONDecodeError as e:
-            results.append({
+            return {
                 "filename": file.filename,
                 "success": False,
                 "error": f"JSON parsing error: {e}"
-            })
+            }
         except Exception as e:
-            results.append({
+            return {
                 "filename": file.filename,
                 "success": False,
                 "error": str(e)
-            })
+            }
         finally:
             if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
 
-    return JSONResponse(content={"success": True, "total_files": len(results), "results": results})
+    # Run blocking extraction in thread pool
+    return await asyncio.get_event_loop().run_in_executor(executor, extract_sync)
 
+@app.post("/extract_invoices_details")
+async def extract_invoices_details(
+    files: List[UploadFile] = File(...),
+    thread_id: str = "default",
+):
+    """
+    Extract structured invoice data from uploaded PDF files.
+    Accepts up to 10 files, each ≤ 2 MB. Processes in parallel.
+    """
+    if len(files) > MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files uploaded. Maximum is {MAX_FILES}."
+        )
+
+    # Filter out empty files early
+    valid_files = [f for f in files if f.filename]
+    if not valid_files:
+        return JSONResponse(content={
+            "success": True,
+            "total_files": 0,
+            "results": []
+        })
+
+    # Process ALL files in parallel
+    tasks = [
+        _process_single_file(file, thread_id)
+        for file in valid_files
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+
+    return JSONResponse(content={
+        "success": True,
+        "total_files": len(results),
+        "results": results
+    })
 
 # ------------------------------------------------------------
 # Endpoint 2: Extract Passports Details (PDF or Image)
