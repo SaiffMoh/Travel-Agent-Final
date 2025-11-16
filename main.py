@@ -849,6 +849,7 @@ async def upload_visas(files: List[UploadFile], thread_id: str = Form(...)):
 MAX_FILES = 10
 MAX_FILE_SIZE_MB = 2
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+ALLOWED_EXT = {'pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff'}
 
 # Global thread pool (reuse across requests)
 executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
@@ -949,65 +950,103 @@ async def extract_invoices_details(
 # ------------------------------------------------------------
 # Endpoint 2: Extract Passports Details (PDF or Image)
 # ------------------------------------------------------------
-@app.post("/extract_passports_details")
-async def extract_passports_details(
-    files: list[UploadFile] = File(...),
-    #api_key: str = Depends(verify_api_key)
-):
-    """
-    Extract passport information from uploaded images or PDFs.
-    Accepts up to 10 files, each ≤ 2 MB.
-    """
-    allowed_ext = ['pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tiff']
+async def _process_single_passport(file: UploadFile) -> dict:
+    """Process one passport file (image/PDF) in a thread pool"""
+    filename = file.filename or "unknown"
+    ext = filename.split('.')[-1].lower() if '.' in filename else ''
 
-    if len(files) > MAX_FILES:
-        raise HTTPException(status_code=400, detail=f"Too many files uploaded. Maximum is {MAX_FILES}.")
+    # === 1. Validate extension ===
+    if ext not in ALLOWED_EXT:
+        return {
+            "filename": filename,
+            "success": False,
+            "error": f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_EXT))}"
+        }
 
-    results = []
+    # === 2. Read file content once (async) ===
+    try:
+        content = await file.read()
+    except Exception as e:
+        return {
+            "filename": filename,
+            "success": False,
+            "error": f"Failed to read file: {str(e)}"
+        }
 
-    for file in files:
-        ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
-        if ext not in allowed_ext:
-            results.append({
-                "filename": file.filename,
-                "success": False,
-                "error": f"Unsupported file type. Allowed: {', '.join(allowed_ext)}"
-            })
-            continue
+    # === 3. Validate size ===
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        return {
+            "filename": filename,
+            "success": False,
+            "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
+        }
+    if len(content) == 0:
+        return {
+            "filename": filename,
+            "success": False,
+            "error": "File is empty."
+        }
 
-        # Validate file size
-        file.file.seek(0, os.SEEK_END)
-        size = file.file.tell()
-        file.file.seek(0)
-        if size > MAX_FILE_SIZE_BYTES:
-            results.append({
-                "filename": file.filename,
-                "success": False,
-                "error": f"File exceeds {MAX_FILE_SIZE_MB} MB limit."
-            })
-            continue
-
+    # === 4. Run heavy processing in thread (non-blocking) ===
+    def extract_sync():
         temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
-                content = await file.read()
+            suffix = f".{ext}"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(content)
                 temp_path = tmp.name
 
-            logger.info(f"Processing passport file: {file.filename}")
+            logger.info(f"Processing passport file: {filename}")
             data = process_passport_file_json(temp_path)
-            if "error" in data:
-                results.append({"filename": file.filename, "success": False, "error": data["error"]})
+
+            if isinstance(data, dict) and data.get("error"):
+                return {"filename": filename, "success": False, "error": data["error"]}
             else:
-                results.append({"filename": file.filename, "success": True, "data": data})
+                return {"filename": filename, "success": True, "data": data}
 
         except Exception as e:
-            logger.error(f"Error processing {file.filename}: {e}")
+            logger.error(f"Error processing {filename}: {e}")
             traceback.print_exc()
-            results.append({"filename": file.filename, "success": False, "error": str(e)})
-
+            return {"filename": filename, "success": False, "error": str(e)}
         finally:
             if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass  # Best effort cleanup
 
-    return JSONResponse(content={"success": True, "total_files": len(results), "results": results})
+    return await asyncio.get_event_loop().run_in_executor(executor, extract_sync)
+
+
+@app.post("/extract_passports_details")
+async def extract_passports_details(
+    files: List[UploadFile] = File(...),
+):
+    """
+    Extract passport information from uploaded images or PDFs.
+    Accepts up to 10 files, each ≤ 2 MB. Processes in parallel.
+    """
+    if len(files) > MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files uploaded. Maximum is {MAX_FILES}."
+        )
+
+    # Filter out invalid UploadFile objects early
+    valid_files = [f for f in files if getattr(f, 'filename', None)]
+    if not valid_files:
+        return JSONResponse(content={
+            "success": True,
+            "total_files": 0,
+            "results": []
+        })
+
+    # === Parallel processing ===
+    tasks = [_process_single_passport(f) for f in valid_files]
+    results = await asyncio.gather(*tasks)
+
+    return JSONResponse(content={
+        "success": True,
+        "total_files": len(results),
+        "results": results
+    })
