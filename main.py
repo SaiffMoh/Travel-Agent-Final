@@ -513,9 +513,13 @@ async def upload_invoice(files: List[UploadFile], thread_id: str = Form(...)):
                 """)
                 continue
             
-            # Create temporary file
+            # Create directory for this thread's invoice PDFs
+            invoice_pdf_dir = UPLOAD_DIR / "invoice_pdfs" / thread_id
+            invoice_pdf_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create file path with unique identifier
             filename = f"{uuid.uuid4()}_{file.filename}"
-            temp_file_path = PDF_DIR / filename
+            temp_file_path = invoice_pdf_dir / filename
             
             with open(temp_file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
