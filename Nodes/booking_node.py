@@ -1,118 +1,201 @@
-"""
-Nodes/booking_node.py
-Handles package booking with passport and visa verification
-Clean, professional HTML outputs without colors
-"""
 from Models.TravelSearchState import TravelSearchState
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 import uuid
 from datetime import datetime
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 
+def get_db_crud():
+    """Import DB modules dynamically"""
+    import sys
+    import os
+    sys.path.append(os.getcwd())
+    from backend import crud, database, schemas
+    return crud, database, schemas
+
+
+def fetch_db_documents_sync(thread_id: str, user_id: int):
+    """
+    Synchronous wrapper for async DB operations.
+    This is necessary because LangGraph nodes must be synchronous.
+    """
+    async def _fetch():
+        crud, database, schemas = get_db_crud()
+        try:
+            async with database.AsyncSessionLocal() as db:
+                passports = await crud.get_passports_for_thread(db, thread_id)
+                visas = await crud.get_visas_for_thread(db, thread_id)
+                return passports, visas
+        except Exception as e:
+            logger.error(f"❌ Database error fetching documents: {e}")
+            return [], []
+    
+    # Get or create event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    # Run async function in sync context
+    return loop.run_until_complete(_fetch())
+
+
+def fetch_packages_from_db_sync(thread_id: str):
+    """
+    Fetch travel packages from DB if not in state.
+    Synchronous wrapper for async operation.
+    """
+    async def _fetch():
+        crud, database, schemas = get_db_crud()
+        try:
+            async with database.AsyncSessionLocal() as db:
+                thread_state = await crud.get_conversation_state(db, thread_id)
+                if thread_state:
+                    return thread_state.get("travel_packages", [])
+                return []
+        except Exception as e:
+            logger.error(f"❌ Database error fetching packages: {e}")
+            return []
+    
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(_fetch())
+
+
 def booking_node(state: TravelSearchState) -> TravelSearchState:
     """
-    Handle travel package booking with document verification.
-    
-    Flow:
-    1. Check if package is selected
-    2. Verify passport and visa uploads
-    3. Confirm booking or request missing documents
+    Booking node handles package selection and document verification.
+    Now properly synchronous for LangGraph compatibility.
     """
-    
     logger.info("=" * 60)
-    logger.info("BOOKING NODE STARTED")
+    logger.info("BOOKING NODE STARTED (DB-backed, sync-safe)")
     logger.info("=" * 60)
-    
+
     thread_id = state.get("thread_id")
+    user_id = state.get("user_id")
     selected_package_id = state.get("selected_package_id")
-    travel_packages = state.get("travel_packages", [])
-    
-    # DEBUG: Log critical state information
+
+    # Validate required fields
+    if not thread_id:
+        logger.error("❌ Missing thread_id in state")
+        state["booking_error"] = "System error: Missing thread identifier"
+        state["booking_html"] = generate_error_html("System error occurred. Please try again.")
+        return state
+
+    if not user_id:
+        logger.error("❌ Missing user_id in state")
+        state["booking_error"] = "System error: Missing user identifier"
+        state["booking_html"] = generate_error_html("Please log in again and try booking.")
+        return state
+
     logger.info(f"Thread ID: {thread_id}")
+    logger.info(f"User ID: {user_id}")
     logger.info(f"Selected Package ID: {selected_package_id}")
-    logger.info(f"Travel Packages Count: {len(travel_packages)}")
-    if travel_packages:
-        logger.info(f"First Package Preview: {travel_packages[0].get('package_id', 'N/A')}")
+
+    # Fetch documents from DB (synchronously)
+    try:
+        passports, visas = fetch_db_documents_sync(thread_id, user_id)
+        logger.info(f"✅ Fetched {len(passports)} passports, {len(visas)} visas from DB")
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch documents: {e}")
+        state["booking_error"] = "Failed to load documents"
+        state["booking_html"] = generate_error_html("Unable to verify documents. Please try again.")
+        return state
+
+    # Get packages from state, or fetch from DB as fallback
+    packages = state.get("travel_packages", [])
+    if not packages:
+        logger.warning("⚠️ No packages in state, fetching from DB...")
+        try:
+            packages = fetch_packages_from_db_sync(thread_id)
+            logger.info(f"✅ Fetched {len(packages)} packages from DB")
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch packages from DB: {e}")
+
+    logger.info(f"Travel Packages Count: {len(packages)}")
+    if packages:
+        logger.info(f"First Package Preview: {packages[0].get('package_id', 'N/A')}")
     else:
-        logger.error("❌ NO TRAVEL PACKAGES IN STATE!")
-    logger.info(f"Passport Uploaded: {state.get('passport_uploaded', False)}")
-    logger.info(f"Visa Uploaded: {state.get('visa_uploaded', False)}")
-    logger.info(f"Booking In Progress: {state.get('booking_in_progress', False)}")
-    logger.info(f"State Keys: {list(state.keys())[:10]}...")
-    
+        logger.error("❌ NO TRAVEL PACKAGES FOUND!")
+
     # Check if we have packages to book
-    if not travel_packages:
-        logger.error("❌ NO TRAVEL PACKAGES FOUND IN STATE!")
-        logger.error(f"Available state keys: {list(state.keys())}")
+    if not packages:
+        logger.error("❌ NO TRAVEL PACKAGES AVAILABLE FOR BOOKING")
         state["booking_error"] = "No travel packages available for booking"
         state["booking_html"] = generate_error_html(
-            "You need to search for packages first. search for flights offers first!"
+            "You need to search for packages first. Please search for flight offers!"
         )
         state["current_node"] = "booking"
         return state
-    
+
     # If no package selected yet, show selection interface
     if not selected_package_id:
         logger.info("No package selected - showing selection interface")
-        state["booking_html"] = generate_package_selection_html(travel_packages)
+        state["booking_html"] = generate_package_selection_html(packages)
         state["booking_in_progress"] = True
         state["needs_followup"] = True
         state["followup_question"] = "Which package would you like to book? Please specify the package number."
         state["current_node"] = "booking"
         return state
-    
+
     # Find the selected package
     selected_package = None
-    for pkg in travel_packages:
+    for pkg in packages:
         if pkg.get("package_id") == selected_package_id:
             selected_package = pkg
             break
-    
+
     if not selected_package:
-        logger.error(f"❌ Package {selected_package_id} not found in {len(travel_packages)} packages")
+        logger.error(f"❌ Package {selected_package_id} not found in {len(packages)} packages")
         state["booking_error"] = f"Package {selected_package_id} not found"
         state["booking_html"] = generate_error_html(
             f"Package {selected_package_id} not found. Please select a valid package."
         )
         state["current_node"] = "booking"
         return state
-    
+
     state["selected_package"] = selected_package
-    logger.info(f"✓ Package {selected_package_id} selected")
+    logger.info(f"✅ Package {selected_package_id} selected")
+
+    # Extract and validate document data
+    passport_data = []
+    visa_data = []
     
-    # Check document uploads
-    passport_uploaded = state.get("passport_uploaded", False)
-    visa_uploaded = state.get("visa_uploaded", False)
+    for p in passports:
+        if p.extracted_data and isinstance(p.extracted_data, dict):
+            passport_data.append(p.extracted_data)
     
-    passport_data = state.get("passport_data", [])
-    visa_data = state.get("visa_data", [])
-    
+    for v in visas:
+        if v.extracted_data and isinstance(v.extracted_data, dict):
+            visa_data.append(v.extracted_data)
+
     logger.info(f"Document data - Passports: {len(passport_data)}, Visas: {len(visa_data)}")
-    
-    # Validate passport data
-    passport_valid = False
-    if passport_uploaded and passport_data:
-        passport_valid = any("error" not in p for p in passport_data)
-        logger.info(f"Passport validation: {passport_valid} ({len(passport_data)} documents)")
-    
-    # Validate visa data
-    visa_valid = False
-    if visa_uploaded and visa_data:
-        visa_valid = any("error" not in v for v in visa_data)
-        logger.info(f"Visa validation: {visa_valid} ({len(visa_data)} documents)")
-    
-    logger.info(f"Final document status - Passport: {passport_valid}, Visa: {visa_valid}")
-    
-    # Generate status HTML
+
+    # Validate document data (check for errors)
+    passport_valid = any("error" not in p for p in passport_data) if passport_data else False
+    visa_valid = any("error" not in v for v in visa_data) if visa_data else False
+
+    logger.info(f"Document validation - Passport: {passport_valid}, Visa: {visa_valid}")
+
+    # Check for missing documents
     missing_documents = []
     if not passport_valid:
         missing_documents.append("passport")
     if not visa_valid:
         missing_documents.append("visa")
-    
+
     if missing_documents:
         logger.info(f"⚠️ Missing documents: {missing_documents}")
         state["booking_html"] = generate_document_request_html(
@@ -127,11 +210,11 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
         state["followup_question"] = f"Please upload your {' and '.join(missing_documents)} to continue with the booking."
         state["current_node"] = "booking"
         return state
-    
+
     # All documents verified - confirm booking
     logger.info("✅ All documents verified - confirming booking")
     booking_reference = generate_booking_reference()
-    
+
     state["booking_confirmed"] = True
     state["booking_reference"] = booking_reference
     state["booking_html"] = generate_booking_confirmation_html(
@@ -143,10 +226,10 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
     state["booking_in_progress"] = False
     state["needs_followup"] = False
     state["current_node"] = "booking"
-    
+
     logger.info(f"✅ Booking confirmed: {booking_reference}")
     logger.info("=" * 60)
-    
+
     return state
 
 

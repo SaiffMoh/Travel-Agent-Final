@@ -203,21 +203,15 @@ def process_passport_file_json(file_path: str) -> dict:
         for barcode in barcodes:
             try:
                 text = barcode.text
-                print('hola text',text)
+                print('hola text', text)
                 parsed = parse_mrz(text)
-                print('hola parsed',parsed)
-               
+                print('hola parsed', parsed)
                 if "error" not in parsed:
-                    # Return JSON in the required format
-                    return {
-                        "NameInPassport": parsed.get('full_name', ''),
-                        "PassportNum": parsed.get('passport_number', ''),
-                        "ExpiryDate": parsed.get('expiry_date', ''),
-                    }
+                    # Return the full parsed MRZ dictionary for DB and frontend
+                    return parsed
             except Exception as e:
                 logger.error(f"Error parsing barcode: {e}")
                 continue
-       
         return {"error": "Could not parse MRZ data from detected barcodes"}
        
     except Exception as e:

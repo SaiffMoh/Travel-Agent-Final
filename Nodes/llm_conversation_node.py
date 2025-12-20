@@ -21,6 +21,16 @@ def llm_conversation_node(state: TravelSearchState) -> TravelSearchState:
             state["current_node"] = "llm_conversation"
             return state
 
+        # Convert ORM ChatMessage objects to dicts if needed
+        conversation = state.get("conversation", [])
+        if conversation and not isinstance(conversation[0], dict):
+            # Likely a list of ORM objects, convert to dicts
+            conversation = [
+                {"role": getattr(m, "sender", None) or getattr(m, "role", None),
+                 "content": getattr(m, "question", None) or getattr(m, "response", None) or getattr(m, "content", None)}
+                for m in conversation
+            ]
+            state["conversation"] = conversation
         llm_prompt = build_input_extraction_prompt(state)
         logger.info("llm_conversation_node: using JSON-mode LLM")
         

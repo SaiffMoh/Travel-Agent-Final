@@ -1,3 +1,7 @@
+# Alembic migration files
+alembic/
+alembic.ini
+versions/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
