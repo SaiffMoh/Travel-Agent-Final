@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from .. import schemas, crud
@@ -232,3 +233,139 @@ async def chat_endpoint(
         logger.error(f"UNEXPECTED ERROR: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Internal server error while processing request")
+
+
+@router.get("/threads", response_model=List[schemas.ChatThreadListItem])
+async def get_user_threads(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Get all chat threads for the current user"""
+    threads = await crud.get_chat_threads_for_user(db, current_user.id)
+    
+    return [
+        schemas.ChatThreadListItem(
+            thread_id=thread.thread_id,
+            message_count=len(thread.messages),
+            created_at=thread.created_at,
+            updated_at=thread.updated_at
+        )
+        for thread in threads
+    ]
+@router.get("/threads/{thread_id}", response_model=schemas.ChatThreadResponse)
+async def get_thread(
+    thread_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Get a specific chat thread with all messages"""
+    thread = await crud.get_chat_thread(db, thread_id)
+    
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    # Check access rights
+    if thread.user_id is not None and thread.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    messages = await crud.get_messages_for_thread(db, thread_id)
+    
+    return schemas.ChatThreadResponse(
+        thread_id=thread.thread_id,
+        messages=[
+            schemas.ChatMessageRead(
+                id=msg.id,
+                thread_id=msg.thread_id,
+                question=msg.question,
+                response=msg.response,
+                message_order=msg.message_order,
+                created_at=msg.created_at
+            )
+            for msg in messages
+        ]
+    )
+
+@router.post("/threads/{thread_id}/messages", response_model=schemas.ChatMessageRead)
+async def save_message_to_thread(
+    thread_id: str,
+    message: schemas.ChatMessageCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Save a question-response pair to a thread"""
+    # Ensure thread exists
+    thread = await crud.get_chat_thread(db, thread_id)
+    if not thread:
+        thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
+    elif thread.user_id is not None and thread.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Create the message
+    db_message = await crud.create_chat_message(
+        db, 
+        thread_id=thread_id,
+        question=message.question,
+        response=message.response
+    )
+    
+    return schemas.ChatMessageRead(
+        id=db_message.id,
+        thread_id=db_message.thread_id,
+        question=db_message.question,
+        response=db_message.response,
+        message_order=db_message.message_order,
+        created_at=db_message.created_at
+    )
+
+@router.get("/threads/{thread_id}/state")
+async def get_thread_state(
+    thread_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Get the conversation state for a thread"""
+    thread = await crud.get_chat_thread(db, thread_id)
+    
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    if thread.user_id is not None and thread.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    state = await crud.get_conversation_state(db, thread_id)
+    return state or {}
+
+@router.delete("/threads/{thread_id}")
+async def delete_thread(
+    thread_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Delete a chat thread and all its messages"""
+    thread = await crud.get_chat_thread(db, thread_id)
+    
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    if thread.user_id is not None and thread.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    await db.delete(thread)
+    await db.commit()
+    
+    return {"success": True, "message": "Thread deleted successfully"}
+
+@router.post("/threads/new")
+async def create_new_thread(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Create a new chat thread for the user"""
+    thread_id = await crud.generate_unique_thread_id(db)
+    thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
+    
+    return {
+        "thread_id": thread.thread_id,
+        "created_at": thread.created_at
+    }
+
