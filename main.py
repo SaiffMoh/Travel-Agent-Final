@@ -32,9 +32,8 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-API_KEY = os.getenv("API_KEY")
 
-required_keys = ["OPENAI_API_KEY", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET", "API_KEY"]
+required_keys = ["OPENAI_API_KEY", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET"]
 for key in required_keys:
     value = os.getenv(key)
     if not value:
@@ -75,15 +74,6 @@ for directory in [DATA_DIR, UPLOAD_DIR, PDF_DIR, JSON_DIR, PASSPORT_DIR]:
 
 graph = create_travel_graph().compile()
 
-def verify_api_key(x_api_key: str = Header(None)):
-    if not API_KEY:
-        logger.error("API_KEY not configured in environment")
-        raise HTTPException(status_code=500, detail="Server configuration error")
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key missing")
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    return x_api_key
 
 @app.get("/")
 async def root():

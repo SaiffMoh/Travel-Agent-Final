@@ -92,8 +92,27 @@ def greeting_conversation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if conversation_history and len(conversation_history) > 0:
             recent_messages = conversation_history[-6:]  # Last 3 user + 3 assistant
             for msg in recent_messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
+                # Handle both dicts and ORM objects
+                if isinstance(msg, dict):
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                else:
+                    # Try to get role and content from attributes
+                    role = getattr(msg, "role", None) or getattr(msg, "sender", "user")
+                    # Prefer 'content', else try 'question' or 'response'
+                    content = getattr(msg, "content", None)
+                    if content is None:
+                        # If both question and response exist, concatenate
+                        question = getattr(msg, "question", None)
+                        response = getattr(msg, "response", None)
+                        if question and response:
+                            content = f"Q: {question}\nA: {response}"
+                        elif question:
+                            content = question
+                        elif response:
+                            content = response
+                        else:
+                            content = ""
                 context += f"{role.capitalize()}: {content}\n"
         
         # Construct the full prompt

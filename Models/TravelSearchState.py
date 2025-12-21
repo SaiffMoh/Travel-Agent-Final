@@ -94,6 +94,8 @@ class TravelSearchState(TypedDict, total=False):
     travel_packages_html: Optional[List[str]]
     selected_offer: Optional[Dict[str, Any]]
     package_results: Optional[Any]
+    # Current authenticated user (optional)
+    user_id: Optional[int]
     
     # Visa info
     visa_info_html: Optional[str]

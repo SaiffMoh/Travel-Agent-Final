@@ -17,7 +17,7 @@ def get_db_crud():
     return crud, database, schemas
 
 
-def fetch_db_documents_sync(thread_id: str, user_id: int):
+def fetch_db_documents_sync(thread_id: str, user_id: int, main_loop=None):
     """
     Synchronous wrapper for async DB operations.
     This is necessary because LangGraph nodes must be synchronous.
@@ -28,25 +28,54 @@ def fetch_db_documents_sync(thread_id: str, user_id: int):
             async with database.AsyncSessionLocal() as db:
                 passports = await crud.get_passports_for_thread(db, thread_id)
                 visas = await crud.get_visas_for_thread(db, thread_id)
-                return passports, visas
+                # Return only plain serializable dicts (extracted_data) to avoid passing ORM objects across loops
+                passport_dicts = []
+                visa_dicts = []
+                for p in passports:
+                    try:
+                        if p.extracted_data and isinstance(p.extracted_data, dict):
+                            passport_dicts.append(p.extracted_data)
+                        else:
+                            passport_dicts.append({})
+                    except Exception:
+                        passport_dicts.append({})
+                for v in visas:
+                    try:
+                        if v.extracted_data and isinstance(v.extracted_data, dict):
+                            visa_dicts.append(v.extracted_data)
+                        else:
+                            visa_dicts.append({})
+                    except Exception:
+                        visa_dicts.append({})
+                return passport_dicts, visa_dicts
         except Exception as e:
             logger.error(f"❌ Database error fetching documents: {e}")
             return [], []
-    
-    # Get or create event loop
+
+    # If caller provided the main event loop (the FastAPI loop), schedule the coroutine there
+    if main_loop:
+        try:
+            future = asyncio.run_coroutine_threadsafe(_fetch(), main_loop)
+            return future.result()
+        except Exception as e:
+            logger.error(f"❌ Error running DB fetch on main loop: {e}")
+            return [], []
+
+    # Otherwise, create or use a local event loop in this thread
     try:
         loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
+        if loop.is_running():
+            # Shouldn't call run_until_complete on a running loop; create a new one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
-    # Run async function in sync context
+
     return loop.run_until_complete(_fetch())
 
 
-def fetch_packages_from_db_sync(thread_id: str):
+def fetch_packages_from_db_sync(thread_id: str, main_loop=None):
     """
     Fetch travel packages from DB if not in state.
     Synchronous wrapper for async operation.
@@ -62,15 +91,24 @@ def fetch_packages_from_db_sync(thread_id: str):
         except Exception as e:
             logger.error(f"❌ Database error fetching packages: {e}")
             return []
-    
+
+    if main_loop:
+        try:
+            future = asyncio.run_coroutine_threadsafe(_fetch(), main_loop)
+            return future.result()
+        except Exception as e:
+            logger.error(f"❌ Error running package fetch on main loop: {e}")
+            return []
+
     try:
         loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
+        if loop.is_running():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
+
     return loop.run_until_complete(_fetch())
 
 
@@ -106,7 +144,7 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
 
     # Fetch documents from DB (synchronously)
     try:
-        passports, visas = fetch_db_documents_sync(thread_id, user_id)
+        passports, visas = fetch_db_documents_sync(thread_id, user_id, state.get("main_event_loop"))
         logger.info(f"✅ Fetched {len(passports)} passports, {len(visas)} visas from DB")
     except Exception as e:
         logger.error(f"❌ Failed to fetch documents: {e}")
@@ -119,7 +157,7 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
     if not packages:
         logger.warning("⚠️ No packages in state, fetching from DB...")
         try:
-            packages = fetch_packages_from_db_sync(thread_id)
+            packages = fetch_packages_from_db_sync(thread_id, state.get("main_event_loop"))
             logger.info(f"✅ Fetched {len(packages)} packages from DB")
         except Exception as e:
             logger.error(f"❌ Failed to fetch packages from DB: {e}")
@@ -174,12 +212,12 @@ def booking_node(state: TravelSearchState) -> TravelSearchState:
     visa_data = []
     
     for p in passports:
-        if p.extracted_data and isinstance(p.extracted_data, dict):
-            passport_data.append(p.extracted_data)
-    
+        if p and isinstance(p, dict):
+            passport_data.append(p)
+
     for v in visas:
-        if v.extracted_data and isinstance(v.extracted_data, dict):
-            visa_data.append(v.extracted_data)
+        if v and isinstance(v, dict):
+            visa_data.append(v)
 
     logger.info(f"Document data - Passports: {len(passport_data)}, Visas: {len(visa_data)}")
 

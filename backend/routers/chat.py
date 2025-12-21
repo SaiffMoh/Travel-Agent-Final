@@ -13,6 +13,14 @@ from Nodes.visa_rag_node import visa_rag_node
 from Nodes.web_search_node import web_search_node
 from Nodes.greeting_conversation_node import greeting_conversation_node
 from Utils.question_to_html import question_to_html
+from Nodes.booking_node import (
+    generate_package_selection_html,
+    generate_document_request_html,
+    generate_booking_confirmation_html,
+)
+from datetime import datetime
+import uuid
+import asyncio
 from graph import create_travel_graph
 import logging, traceback
 
@@ -118,6 +126,72 @@ async def chat_endpoint(
                 "user_message": user_message,
                 "booking_in_progress": previous_state.get("booking_in_progress", False)
             })
+            # If booking intent detected, handle booking flow synchronously here (on request loop)
+            if is_booking:
+                # Fetch passports/visas and packages from DB using async CRUD
+                passports = await crud.get_passports_for_thread(db, thread_id)
+                visas = await crud.get_visas_for_thread(db, thread_id)
+
+                # Convert extracted data to plain dicts
+                passport_data = [p.extracted_data for p in passports if getattr(p, 'extracted_data', None) and isinstance(p.extracted_data, dict)]
+                visa_data = [v.extracted_data for v in visas if getattr(v, 'extracted_data', None) and isinstance(v.extracted_data, dict)]
+
+                # Get packages (prefer previous_state, fallback to stored state)
+                thread_state = await crud.get_conversation_state(db, thread_id) or {}
+                travel_packages = previous_state.get("travel_packages") or thread_state.get("travel_packages", [])
+
+                # If no packages, ask user to search first
+                if not travel_packages:
+                    html = "<div class='p-4 bg-yellow-50 border border-yellow-200 rounded-lg'><p class='text-yellow-700'>No travel packages found. Please run a search first.</p></div>"
+                    await crud.create_chat_message(db, thread_id, "", "No packages available")
+                    await crud.save_conversation_state(db, thread_id, {"booking_error": "No travel packages available"})
+                    return ChatResponse(html_content=html)
+
+                # Find selected package
+                selected_package = None
+                for pkg in travel_packages:
+                    if pkg.get("package_id") == package_id:
+                        selected_package = pkg
+                        break
+
+                if not selected_package:
+                    # Show package selection HTML
+                    html = generate_package_selection_html(travel_packages)
+                    await crud.create_chat_message(db, thread_id, user_message, "")
+                    await crud.create_chat_message(db, thread_id, "", "Please select a package")
+                    await crud.save_conversation_state(db, thread_id, {"booking_in_progress": True, "travel_packages": travel_packages, "travel_packages_html": html})
+                    return ChatResponse(html_content=html)
+
+                # Validate documents
+                passport_valid = any("error" not in p for p in passport_data) if passport_data else False
+                visa_valid = any("error" not in v for v in visa_data) if visa_data else False
+
+                if not (passport_valid and visa_valid):
+                    html = generate_document_request_html(selected_package, passport_valid, visa_valid, passport_data if passport_valid else None, visa_data if visa_valid else None)
+                    await crud.create_chat_message(db, thread_id, user_message, "")
+                    await crud.create_chat_message(db, thread_id, "", "Please upload required documents")
+                    await crud.save_conversation_state(db, thread_id, {
+                        "booking_in_progress": True,
+                        "travel_packages": travel_packages,
+                        "travel_packages_html": previous_state.get("travel_packages_html"),
+                        "passport_uploaded": previous_state.get("passport_uploaded", False),
+                        "visa_uploaded": previous_state.get("visa_uploaded", False)
+                    })
+                    return ChatResponse(html_content=html)
+
+                # All documents valid - confirm booking
+                booking_ref = "BK" + datetime.now().strftime("%Y%m%d") + str(uuid.uuid4())[:8].upper()
+                html = generate_booking_confirmation_html(selected_package, passport_data, visa_data, booking_ref)
+                await crud.create_chat_message(db, thread_id, user_message, "")
+                await crud.create_chat_message(db, thread_id, "", f"Booking confirmed: {booking_ref}")
+                await crud.save_conversation_state(db, thread_id, {
+                    "booking_confirmed": True,
+                    "booking_reference": booking_ref,
+                    "booking_html": html,
+                    "travel_packages": travel_packages,
+                    "travel_packages_html": previous_state.get("travel_packages_html")
+                })
+                return ChatResponse(html_content=html)
             # Always include travel_packages and travel_packages_html from previous_state
             travel_packages = previous_state.get("travel_packages", [])
             travel_packages_html = previous_state.get("travel_packages_html")
@@ -156,6 +230,11 @@ async def chat_endpoint(
                     state[field] = previous_state[field]
             if graph is None:
                 raise HTTPException(status_code=500, detail="Graph compilation failed")
+            # Provide the main asyncio loop to nodes that need DB access from worker threads
+            try:
+                state["main_event_loop"] = asyncio.get_running_loop()
+            except RuntimeError:
+                state["main_event_loop"] = None
             result = await graph.ainvoke(state)
             # Always persist travel_packages and travel_packages_html after search
             travel_packages = result.get("travel_packages")
