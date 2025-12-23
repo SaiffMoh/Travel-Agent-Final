@@ -4,8 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 import os, uuid, logging
 from pathlib import Path
-from Nodes.invoice_extraction_json import invoice_extraction_json
 from Utils.invoice_to_html import invoice_to_html
+from graph import create_travel_graph
+import asyncio, shutil
 from ..database import get_db
 from ..deps import get_current_active_user
 from .. import schemas, crud
@@ -115,8 +116,10 @@ async def process_invoices(
     # Ensure upload directory exists
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     
+    # Compile graph once for this request
+    graph = create_travel_graph().compile()
+
     html_blocks = []
-    processed_count = 0
     
     for file in files:
         # Validate file extension
@@ -139,16 +142,17 @@ async def process_invoices(
             )
             continue
         
-        # Save file to disk
+        # Save file to disk under data/uploads/invoice_pdfs/<thread_id>
         save_name = f"{uuid.uuid4()}_{file.filename}"
-        save_path = UPLOAD_DIR / thread_id / save_name
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        
+        invoice_pdf_dir = Path("data/uploads/invoice_pdfs") / thread_id
+        invoice_pdf_dir.mkdir(parents=True, exist_ok=True)
+        save_path = invoice_pdf_dir / save_name
+
         try:
             with open(save_path, "wb") as f:
                 f.write(content)
-            
-            # Create invoice record in database
+
+            # Create invoice record in database (persist before processing)
             db_invoice = await crud.create_invoice(db, schemas.InvoiceCreate(
                 thread_id=thread_id,
                 user_id=current_user.id,
@@ -156,70 +160,90 @@ async def process_invoices(
                 file_path=str(save_path),
                 file_size=len(content)
             ))
-            
-            # Extract invoice data
-            extracted = invoice_extraction_json(str(save_path), thread_id)
-            logger.info(f"Extracted invoice data from {file.filename}")
-            
-            # Normalize field names
-            normalized = normalize_invoice_data(extracted)
-            
-            # Update invoice with extracted data in database
-            await crud.update_invoice_extraction(
-                db, 
-                db_invoice.id, 
-                normalized, 
-                status="completed"
-            )
-            logger.info(f"Saved invoice to DB: invoice_id={db_invoice.id}")
-            
-            # Convert to HTML
-            html = invoice_to_html(normalized)
-            
-            # Add filename header
-            html_blocks.append(
-                f'<div class="mb-6">'
-                f'<div class="bg-blue-100 border-l-4 border-blue-500 p-3 mb-2">'
-                f'<h3 class="text-lg font-semibold text-blue-900">📄 {file.filename}</h3>'
-                f'</div>'
-                f'{html}'
-                f'</div>'
-            )
-            processed_count += 1
-            
+
+            # Prepare state for graph-driven invoice extraction
+            state = {
+                "thread_id": thread_id,
+                "current_message": f"Processing uploaded invoice: {file.filename}",
+                "user_message": f"Processing uploaded invoice: {file.filename}",
+                "needs_followup": True,
+                "followup_question": None,
+                "current_node": "invoice_extraction",
+                "invoice_uploaded": True,
+                "invoice_pdf_path": str(save_path),
+                "extracted_invoice_data": None,
+                "invoice_html": None
+            }
+
+            try:
+                try:
+                    state["main_event_loop"] = asyncio.get_running_loop()
+                except RuntimeError:
+                    state["main_event_loop"] = None
+
+                # Run graph to extract invoice HTML and data
+                result = await graph.ainvoke(state)
+
+                invoice_html = result.get("invoice_html", f"""
+                <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p class="text-yellow-600">Invoice '{file.filename}' processed but no data extracted.</p>
+                </div>
+                """)
+
+                # Normalize and persist extracted data
+                extracted = result.get("extracted_invoice_data")
+                normalized = normalize_invoice_data(extracted) if extracted else {}
+
+                await crud.update_invoice_extraction(
+                    db,
+                    db_invoice.id,
+                    normalized,
+                    status="completed"
+                )
+
+                # Add file header if multiple files
+                if len(files) > 1:
+                    html_blocks.append(f"""
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-3">File: {file.filename}</h3>
+                        {invoice_html}
+                    </div>
+                    """)
+                else:
+                    html_blocks.append(invoice_html)
+
+            except Exception as node_exc:
+                logger.error(f"Graph extraction error for {file.filename}: {node_exc}")
+                # Update DB with error state
+                await crud.update_invoice_extraction(
+                    db,
+                    db_invoice.id,
+                    {},
+                    status="error",
+                    error=str(node_exc)
+                )
+                html_blocks.append(f"""
+                <div class="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
+                    <p class="text-red-600">Error processing '{file.filename}': {str(node_exc)}</p>
+                </div>
+                """)
+
         except Exception as e:
-            logger.error(f"Error processing {file.filename}: {str(e)}")
-            
+            logger.error(f"Error saving/processing {file.filename}: {str(e)}")
             # Update invoice with error status in database if record was created
             if 'db_invoice' in locals():
                 await crud.update_invoice_extraction(
-                    db, 
-                    db_invoice.id, 
-                    {}, 
-                    status="error", 
+                    db,
+                    db_invoice.id,
+                    {},
+                    status="error",
                     error=str(e)
                 )
-            
-            html_blocks.append(
-                f'<div class="p-4 mb-4 bg-red-50 border border-red-200 rounded-lg">'
-                f'<p class="text-red-600"><strong>{file.filename}</strong>: Processing failed - {str(e)}</p>'
-                f'</div>'
-            )
-    
-    # Add summary header
-    if processed_count > 0:
-        summary = (
-            f'<div class="p-4 mb-6 bg-green-50 border border-green-200 rounded-lg">'
-            f'<p class="text-green-700 font-semibold">✓ Successfully processed {processed_count} of {len(files)} invoice(s)</p>'
-            f'</div>'
-        )
-        html_blocks.insert(0, summary)
-    else:
-        html_blocks.insert(0, 
-            '<div class="p-4 mb-6 bg-red-50 border border-red-200 rounded-lg">'
-            '<p class="text-red-600 font-semibold">✗ No invoices were successfully processed</p>'
-            '</div>'
-        )
+            html_blocks.append(f"""
+            <div class="p-4 mb-4 bg-red-50 border border-red-200 rounded-lg">
+                <p class="text-red-600"><strong>{file.filename}</strong>: Processing failed - {str(e)}</p>
+            </div>
+            """)
     
     return "".join(html_blocks)
 
