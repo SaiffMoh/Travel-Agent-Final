@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    libgl1 \
+    libglib2.0-0 \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,6 +25,11 @@ RUN pip install --no-cache-dir --upgrade pip
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install sentence-transformers
+# RUN pip install paddlepaddle-cpu
+RUN pip install paddleocr
+
 # Copy application code
 COPY . .
 
@@ -32,4 +39,4 @@ RUN python Utils/build_vector_store.py
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
