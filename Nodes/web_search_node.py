@@ -2,74 +2,84 @@ import os
 import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
-from openai import OpenAI
 from dotenv import load_dotenv
 import html
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import requests
+
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
+TAVILY_API_KEY=os.getenv("TAVILY_API_KEY")
+TAVILY_URL=os.getenv("TAVILY_URL")
+
 # Initialize OpenAI client for web search
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def tavily_web_search(query: str) -> str:
+    """
+    Execute a web search using Tavily API and return raw text content.
+    """
+    payload = {
+        "model": "tavily",
+        "messages": [
+            {
+                "role": "user",
+                "content": query
+            }
+        ]
+    }
+
+    headers = {
+        "Authorization": f"Bearer {TAVILY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(
+        TAVILY_URL,
+        headers=headers,
+        json=payload,
+        timeout=30
+    )
+
+    response.raise_for_status()
+    data = response.json()
+
+    # Tavily follows OpenAI-style structure
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError):
+        raise ValueError("Invalid Tavily response format")
 
 def web_search_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Execute a web search using OpenAI's web_search tool and return HTML-formatted results.
-    
-    Args:
-        state: Dictionary containing:
-            - user_message: The search query from the user
-            - thread_id: Conversation thread identifier
-            
-    Returns:
-        Updated state with:
-            - web_search_result: Raw text result from web search
-            - web_search_html: HTML-formatted result for display
-            - web_search_error: Error message if search fails
-    """
     try:
         query = state.get("user_message", "").strip()
-        
+
         if not query:
-            logger.error("No query provided for web search")
             state["web_search_error"] = "No search query provided"
             state["web_search_html"] = generate_error_html("Please provide a search query.")
             return state
-        
-        logger.info(f"Executing web search for query: {query}")
-        
-        # Execute web search using OpenAI Responses API
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=query,
-            tools=[{"type": "web_search"}]
-        )
-        
-        # Extract text response from output
-        search_result = extract_response_text(response)
-        
+
+        logger.info(f"Executing Tavily web search for query: {query}")
+
+        search_result = tavily_web_search(query)
+
         if not search_result:
-            logger.warning("No search results returned")
             state["web_search_error"] = "No results found"
-            state["web_search_html"] = generate_error_html("No search results found for your query.")
+            state["web_search_html"] = generate_error_html("No search results found.")
             return state
-        
-        logger.info(f"Web search successful, result length: {len(search_result)}")
-        
-        # Store results in state
+
         state["web_search_result"] = search_result
         state["web_search_html"] = generate_search_result_html(query, search_result)
         state["web_search_error"] = None
-        
+
         return state
-        
+
     except Exception as e:
-        logger.error(f"Web search error: {str(e)}")
+        logger.exception("Tavily web search failed")
         state["web_search_error"] = str(e)
         state["web_search_html"] = generate_error_html(f"Search failed: {str(e)}")
         return state
-
 
 def extract_response_text(response) -> str:
     """
