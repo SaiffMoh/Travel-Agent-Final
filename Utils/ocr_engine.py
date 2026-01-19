@@ -75,86 +75,123 @@ def ocr_with_rapidocr_paddle(image_bytes: bytes) -> str:
     try:
         from PIL import Image
         import numpy as np
+        import cv2
         
         # Get cached engine
         engine = get_rapidocr_engine()
         
-        # Convert bytes to numpy array
+        # Convert bytes to PIL Image
         image = Image.open(io.BytesIO(image_bytes))
+        
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Convert to numpy array for OpenCV processing
         image_np = np.array(image)
         
-        # Perform OCR
-        # Returns: (dt_boxes, rec_texts, scores) or None
-        result, elapse = engine(image_np)
+        # Apply preprocessing to improve OCR accuracy
+        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
         
-        if result is None:
-            logger.warning("RapidOCR returned no results")
+        # Try multiple preprocessing strategies
+        preprocessing_methods = [
+            ("original", image_np),
+            ("gray", gray),
+        ]
+        
+        # Adaptive threshold for varying lighting
+        try:
+            thresh = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, 11, 2
+            )
+            preprocessing_methods.append(("adaptive_thresh", thresh))
+        except:
+            pass
+        
+        # Bilateral filter to reduce noise while preserving edges
+        try:
+            bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
+            preprocessing_methods.append(("bilateral", bilateral))
+        except:
+            pass
+        
+        # Increase contrast with CLAHE
+        try:
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            clahe_img = clahe.apply(gray)
+            preprocessing_methods.append(("clahe", clahe_img))
+        except:
+            pass
+        
+        all_text_lines = []
+        best_result = ""
+        max_chars = 0
+        
+        for method_name, img_to_process in preprocessing_methods:
+            try:
+                # Perform OCR
+                result, elapse = engine(img_to_process)
+                
+                if result is None:
+                    continue
+                
+                # Extract text from results
+                # result is a list of [bbox, text, confidence]
+                text_lines = []
+                for line in result:
+                    if len(line) >= 2:
+                        text = line[1]  # The recognized text
+                        confidence = line[2] if len(line) >= 3 else 0
+                        
+                        # Only include text with reasonable confidence
+                        if text.strip() and confidence > 0.3:
+                            text_lines.append(text)
+                
+                extracted = "\n".join(text_lines)
+                
+                # Keep track of all results
+                all_text_lines.extend(text_lines)
+                
+                # Track the best result (most characters extracted)
+                if len(extracted) > max_chars:
+                    max_chars = len(extracted)
+                    best_result = extracted
+                    
+                logger.info(f"RapidOCR ({method_name}) extracted {len(extracted)} characters, {len(text_lines)} lines")
+                
+            except Exception as e:
+                logger.warning(f"RapidOCR ({method_name}) attempt failed: {e}")
+                continue
+        
+        # Combine unique lines from all methods
+        if all_text_lines:
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_lines = []
+            for line in all_text_lines:
+                line_clean = line.strip()
+                # Keep line if not seen before
+                if line_clean and line_clean not in seen:
+                    seen.add(line_clean)
+                    unique_lines.append(line)
+            
+            combined_text = "\n".join(unique_lines)
+            
+            logger.info(f"RapidOCR final: {len(combined_text)} characters from {len(unique_lines)} unique lines")
+            return combined_text
+        else:
+            logger.warning("RapidOCR returned no results from any method")
             return ""
-        
-        # Extract text from results
-        # result is a list of [bbox, text, confidence]
-        text_lines = []
-        for line in result:
-            if len(line) >= 2:
-                text = line[1]  # The recognized text
-                text_lines.append(text)
-        
-        extracted_text = "\n".join(text_lines)
-        
-        logger.info(f"RapidOCR (PaddleOCR) extracted {len(extracted_text)} characters")
-        return extracted_text
         
     except Exception as e:
         logger.error(f"RapidOCR failed: {e}")
         logger.error(f"RapidOCR traceback: {traceback.format_exc()}")
         return ""
-
-    """
-    Alternative: Direct PaddleOCR-ONNX from HuggingFace.
-    Uses models from: https://huggingface.co/spaces/PaddlePaddle/PaddleOCR
-    
-    This is a fallback if RapidOCR doesn't work.
-    """
-    try:
-        from paddleocr import PaddleOCR
-        from PIL import Image
-        import numpy as np
-        
-        # Initialize PaddleOCR with ONNX backend (no PaddlePaddle framework needed)
-        ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang='en',
-            use_gpu=False,
-            show_log=False,
-            # Use ONNX models from HuggingFace
-            det_model_dir=None,  # Will download from default HF repo
-            rec_model_dir=None,
-            cls_model_dir=None,
-        )
-        
-        # Convert bytes to numpy array
-        image = Image.open(io.BytesIO(image_bytes))
-        image_np = np.array(image)
-        
-        # Perform OCR
-        result = ocr.ocr(image_np, cls=True)
-        
-        # Extract text
-        text_lines = []
-        if result and result[0]:
-            for line in result[0]:
-                if line and len(line) > 1:
-                    text_lines.append(line[1][0])
-        
-        extracted_text = "\n".join(text_lines)
-        logger.info(f"PaddleOCR-ONNX extracted {len(extracted_text)} characters")
-        return extracted_text
-        
     except Exception as e:
-        logger.error(f"PaddleOCR-ONNX failed: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"RapidOCR failed: {e}")
+        logger.error(f"RapidOCR traceback: {traceback.format_exc()}")
         return ""
-
 
 def ocr_with_vlmm(image_bytes: bytes, custom_prompt: Optional[str] = None) -> str:
     """

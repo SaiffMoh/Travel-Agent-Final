@@ -67,16 +67,19 @@ def detect_barcode(image):
  
 def format_date(s: str) -> str:
     """Format MRZ date string (YYMMDD) to ISO format (YYYY-MM-DD)"""
-    yy = int(s[0:2])
-    mm = int(s[2:4])
-    dd = int(s[4:6])
-   
-    if yy <= 50:
-        year = 2000 + yy
-    else:
-        year = 1900 + yy
-   
-    return f"{year:04d}-{mm:02d}-{dd:02d}"
+    try:
+        yy = int(s[0:2])
+        mm = int(s[2:4])
+        dd = int(s[4:6])
+       
+        if yy <= 50:
+            year = 2000 + yy
+        else:
+            year = 1900 + yy
+       
+        return f"{year:04d}-{mm:02d}-{dd:02d}"
+    except:
+        return ""
  
  
 def extract_passport_with_llm(ocr_text: str) -> dict:
@@ -157,18 +160,146 @@ RETURN ONLY THIS JSON (no markdown, no explanation):
         
     except Exception as e:
         logger.error(f"LLM extraction failed: {e}")
+        logger.error(traceback.format_exc())
         return {"error": f"LLM extraction failed: {str(e)}"}
 
 
+def parse_mrz_flexible(mrz_line: str) -> dict:
+    """
+    Flexible MRZ parser that handles both complete and partial MRZ data.
+    Works with fragments and reconstructed MRZ lines.
+    """
+    try:
+        mrz_clean = re.sub(r'[^A-Z0-9<]', '', mrz_line.upper().strip())
+        logger.info(f"Parsing MRZ (length={len(mrz_clean)}): {mrz_clean[:100]}")
+        
+        result = {}
+        
+        # Identify Line 1 (names) and Line 2 (data)
+        line1 = None
+        line2 = None
+        
+        # Strategy 1: If we have ~88 chars, split in half
+        if len(mrz_clean) >= 80 and len(mrz_clean) <= 100:
+            line1 = mrz_clean[:44]
+            line2 = mrz_clean[44:88] if len(mrz_clean) >= 88 else mrz_clean[44:]
+        # Strategy 2: Find where line2 starts (passport number pattern)
+        elif mrz_clean.startswith('P<'):
+            # Look for passport number pattern in the string
+            match = re.search(r'([A-Z]\d{7,9}[A-Z0-9<]{3}\d)', mrz_clean)
+            if match:
+                split_pos = match.start()
+                line1 = mrz_clean[:split_pos]
+                line2 = mrz_clean[split_pos:]
+        # Strategy 3: Just have line2 (passport number)
+        elif re.match(r'^[A-Z]\d{7,9}', mrz_clean):
+            line2 = mrz_clean
+        
+        # Extract from Line 1 (names)
+        if line1:
+            result['passport_type'] = line1[0] if len(line1) > 0 else 'P'
+            result['country_code'] = line1[2:5].replace('<', '') if len(line1) >= 5 else ''
+            
+            # Extract names
+            name_section = line1[5:].replace('<', ' ').strip() if len(line1) > 5 else ''
+            name_parts = [p for p in name_section.split() if p]
+            
+            if name_parts:
+                result['surname'] = name_parts[0]
+                result['given_names'] = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+                result['full_name'] = f"{' '.join(name_parts[1:])} {name_parts[0]}".strip() if len(name_parts) > 1 else name_parts[0]
+        
+        # Extract from Line 2 (passport number, dates, etc)
+        if line2:
+            pos = 0
+            
+            # Passport number (variable length, letter + 7-9 digits)
+            passport_match = re.match(r'^([A-Z]\d{7,9})', line2)
+            if passport_match:
+                result['passport_number'] = passport_match.group(1)
+                pos = len(passport_match.group(1))
+                
+                # Skip check digit (usually 1 digit, but could be '<')
+                if pos < len(line2) and (line2[pos].isdigit() or line2[pos] == '<'):
+                    pos += 1
+                
+                # Nationality (3 letters) - handle truncation
+                if pos + 3 <= len(line2):
+                    nationality_raw = line2[pos:pos+3]
+                    # Clean nationality and validate it's 3 letters
+                    nationality = nationality_raw.replace('<', '')
+                    
+                    # If nationality looks wrong (e.g., 'GY9'), try to find 3 consecutive letters
+                    if not nationality.isalpha() or len(nationality) < 2:
+                        # Look for pattern like 'EGY' in the surrounding text
+                        nat_match = re.search(r'([A-Z]{3})', line2[max(0, pos-5):pos+10])
+                        if nat_match:
+                            nationality = nat_match.group(1)
+                            logger.info(f"Corrected nationality from '{nationality_raw}' to '{nationality}'")
+                    
+                    result['nationality'] = nationality
+                    result['country_code'] = result.get('country_code') or nationality
+                    pos += 3
+                
+                # Birth date (6 digits)
+                # Look ahead to find 6 consecutive digits (could be offset if parsing went wrong)
+                birth_match = re.search(r'(\d{6})', line2[pos:])
+                if birth_match:
+                    birth_str = birth_match.group(1)
+                    result['birth_date'] = format_date(birth_str)
+                    pos = pos + birth_match.end()
+                
+                # Skip check digit
+                if pos < len(line2) and (line2[pos].isdigit() or line2[pos] == '<'):
+                    pos += 1
+                
+                # Gender (1 char)
+                if pos < len(line2):
+                    gender = line2[pos]
+                    result['gender'] = gender if gender in ['M', 'F'] else ''
+                    pos += 1
+                
+                # Expiry date (6 digits) - search for next 6-digit sequence
+                expiry_match = re.search(r'(\d{6})', line2[pos:])
+                if expiry_match:
+                    expiry_str = expiry_match.group(1)
+                    result['expiry_date'] = format_date(expiry_str)
+                    
+                    # Calculate issue date (typically 10 years before expiry)
+                    try:
+                        expiry_dt = datetime.datetime.strptime(result['expiry_date'], "%Y-%m-%d")
+                        issued_year = expiry_dt.year - 10
+                        issued_day = expiry_dt.day + 1
+                        try:
+                            issued_dt = expiry_dt.replace(year=issued_year, day=issued_day)
+                        except ValueError:
+                            issued_dt = expiry_dt.replace(year=issued_year, day=1)
+                        result['issued_date'] = issued_dt.strftime("%Y-%m-%d")
+                    except:
+                        pass
+        
+        # Validation - must have at least passport number
+        if not result.get('passport_number'):
+            return {"error": "Could not extract passport number", "raw": mrz_clean[:100]}
+        
+        logger.info(f"✓ Successfully parsed: {result.get('full_name', 'N/A')} - {result.get('passport_number')}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in parse_mrz_flexible: {e}")
+        return {"error": str(e), "raw": mrz_line[:100]}
+
+
 def parse_mrz(mrz_line: str) -> dict:
-    """Parse MRZ line and extract passport information"""
+    """Parse MRZ line and extract passport information - original strict version"""
     try:
         mrz = mrz_line.strip()
  
         pattern = re.compile(r'([A-Z0-9<]{9})(\d)([A-Z]{3})(\d{6})(\d)([MF<])(\d{6})(\d)')
         m = pattern.search(mrz)
         if not m:
-            return {"error": "MRZ pattern not found", "raw": mrz}
+            # Fall back to flexible parser
+            return parse_mrz_flexible(mrz_line)
  
         passport_number_raw = m.group(1)
         passport_number = passport_number_raw.replace('<', '')
@@ -221,10 +352,111 @@ def parse_mrz(mrz_line: str) -> dict:
         return result
  
     except Exception as e:
-        return {
-            "error": str(e),
-            "raw": mrz_line
-        }
+        # Fall back to flexible parser
+        return parse_mrz_flexible(mrz_line)
+
+
+def reconstruct_mrz_smart(lines: list) -> list:
+    """
+    Smart MRZ reconstruction from OCR fragments.
+    Returns list of candidate MRZ strings to try.
+    """
+    candidates = []
+    
+    # Clean all lines
+    cleaned_lines = []
+    for line in lines:
+        line_clean = line.strip().upper()
+        line_clean = re.sub(r'[^A-Z0-9<]', '', line_clean)
+        if line_clean and len(line_clean) >= 10:
+            cleaned_lines.append(line_clean)
+    
+    logger.info(f"Processing {len(cleaned_lines)} cleaned lines for MRZ reconstruction")
+    for i, line in enumerate(cleaned_lines):
+        logger.info(f"  Line {i+1}: {line}")
+    
+    # Strategy 1: Find complete MRZ lines
+    for line in cleaned_lines:
+        if len(line) >= 35 and (line.startswith('P<') or line.count('<') > 3):
+            candidates.append(line)
+            logger.info(f"✓ Complete MRZ candidate: {line[:50]}...")
+    
+    # Strategy 2: Identify Line 1 (names) and Line 2 (data) fragments
+    line1_candidates = []
+    line2_candidates = []
+    
+    for line in cleaned_lines:
+        # Line 1: starts with P< or has << separator
+        if line.startswith('P<') or '<<' in line:
+            line1_candidates.append(line)
+            logger.info(f"  → Line1 candidate: {line}")
+        # Line 2: starts with passport number (letter + digits)
+        elif re.match(r'^[A-Z]\d{7,9}', line):
+            line2_candidates.append(line)
+            logger.info(f"  → Line2 candidate: {line}")
+    
+    # Strategy 3: Combine the best Line1 + Line2
+    if line1_candidates and line2_candidates:
+        # Score each Line1 candidate based on quality indicators
+        def score_line1(line):
+            score = len(line)  # Base score is length
+            
+            # Bonus for having << separator (indicates proper name structure)
+            if '<<' in line:
+                score += 20
+            
+            # Bonus for having more < characters (proper MRZ structure)
+            score += line.count('<') * 2
+            
+            # Penalty for having digits (shouldn't be in name section)
+            score -= sum(1 for c in line if c.isdigit()) * 5
+            
+            return score
+        
+        # Select best Line1 based on score
+        line1 = max(line1_candidates, key=score_line1)
+        line2 = max(line2_candidates, key=len)
+        
+        logger.info(f"Best Line1 (len={len(line1)}): {line1}")
+        logger.info(f"Best Line2 (len={len(line2)}): {line2}")
+        
+        # Pad to 44 characters if needed
+        if len(line1) < 44:
+            line1 = line1 + '<' * (44 - len(line1))
+        if len(line2) < 44:
+            line2 = line2 + '<' * (44 - len(line2))
+        
+        combined = line1 + line2
+        candidates.insert(0, combined)  # Prioritize combined
+        logger.info(f"✓ Reconstructed MRZ: {combined[:88]}")
+        
+        # ALSO try other line1 candidates if we have multiple
+        # This helps when OCR produces multiple attempts at the name line
+        if len(line1_candidates) > 1:
+            # Sort by score to try better quality versions first
+            sorted_line1 = sorted(line1_candidates, key=score_line1, reverse=True)
+            for alt_line1 in sorted_line1[1:3]:  # Try up to 2 alternatives
+                if alt_line1 != line1:  # Don't duplicate
+                    alt_padded = alt_line1 + '<' * (44 - len(alt_line1)) if len(alt_line1) < 44 else alt_line1
+                    alt_combined = alt_padded + line2
+                    candidates.insert(1, alt_combined)  # Insert after primary candidate
+                    logger.info(f"✓ Alternative MRZ with Line1: {alt_line1[:30]}...")
+    
+    # Strategy 4: Even if we only have Line2, try it
+    elif line2_candidates:
+        line2 = max(line2_candidates, key=len)
+        candidates.append(line2)
+        logger.info(f"✓ Line2 only: {line2}")
+    
+    # Strategy 5: Try concatenating adjacent lines
+    for i in range(len(cleaned_lines) - 1):
+        if len(cleaned_lines[i]) >= 20 and len(cleaned_lines[i+1]) >= 20:
+            combined = cleaned_lines[i] + cleaned_lines[i+1]
+            if combined.count('<') >= 3:
+                candidates.append(combined)
+                logger.info(f"✓ Adjacent concat: {combined[:60]}...")
+    
+    return candidates
  
  
 def process_passport_file_json(file_path: str) -> dict:
@@ -236,13 +468,7 @@ def process_passport_file_json(file_path: str) -> dict:
         file_path: Path to the passport file
        
     Returns:
-        JSON dictionary with passport information:
-        {
-            "NameInPassport": str,
-            "PassportNum": str,
-            "ExpiryDate": str,
-            "error": str (optional, if processing failed)
-        }
+        JSON dictionary with passport information
     """
     try:
         passport = None
@@ -298,113 +524,174 @@ def process_passport_file_json(file_path: str) -> dict:
                 
                 # Use OCR to extract text
                 ocr_text = ocr_passport(image_bytes)
+                logger.info(f"OCR extracted {len(ocr_text)} characters")
                 
                 if not ocr_text or len(ocr_text) < 20:
-                    return {"error": "No MRZ barcode detected and OCR extraction failed"}
+                    logger.warning("OCR extraction too short, trying LLM...")
+                    return extract_passport_with_llm("")
                 
-                # Try to find MRZ lines in OCR text
+                # Log OCR output for debugging
+                logger.info(f"OCR text:\n{ocr_text[:300]}")
+                
+                # Try to reconstruct MRZ from OCR text
                 lines = ocr_text.split('\n')
-                mrz_candidates = []
-                
-                # Strategy 1: Find complete MRZ lines (40+ chars with <)
-                for line in lines:
-                    line = line.strip().upper()
-                    # MRZ lines are typically 44 chars and contain P< or V<
-                    if len(line) >= 30 and ('P<' in line or '<<' in line or line.count('<') > 3):
-                        # Clean the line
-                        cleaned = re.sub(r'[^A-Z0-9<]', '', line)
-                        if len(cleaned) >= 30:
-                            mrz_candidates.append(cleaned)
-                
-                # Strategy 2: Reconstruct fragmented MRZ (if no complete lines found)
-                if not mrz_candidates:
-                    logger.info("No complete MRZ found, attempting to reconstruct from fragments...")
-                    
-                    # Find fragments that look like MRZ parts
-                    fragments = []
-                    for line in lines:
-                        line_clean = line.strip().upper()
-                        line_clean = re.sub(r'[^A-Z0-9<]', '', line_clean)
-                        
-                        # MRZ fragments: start with P<, contain passport numbers, or have many <
-                        if (line_clean.startswith('P<') or 
-                            re.search(r'[A-Z]\d{7,9}', line_clean) or  # Passport number pattern
-                            line_clean.count('<') >= 2):
-                            fragments.append(line_clean)
-                    
-                    # Try to reconstruct MRZ lines by separating line 1 and line 2
-                    if len(fragments) >= 1:
-                        # Strategy: Line 1 starts with P<, Line 2 starts with passport number
-                        line1 = None
-                        line2 = None
-                        
-                        for frag in fragments:
-                            # Line 1: starts with P< (names section)
-                            if frag.startswith('P<') and not line1:
-                                line1 = frag
-                            # Line 2: starts with passport number pattern (letter + digits)
-                            elif re.match(r'^[A-Z]\d{7,9}', frag) and not line2:
-                                line2 = frag
-                        
-                        # Add the separated lines as candidates
-                        if line1 and len(line1) >= 30:
-                            mrz_candidates.append(line1)
-                            logger.info(f"Found MRZ Line 1: {line1}")
-                        
-                        if line2 and len(line2) >= 30:
-                            mrz_candidates.append(line2)
-                            logger.info(f"Found MRZ Line 2: {line2}")
-                        
-                        # Try combining line 1 and line 2 as separate MRZ lines
-                        # The parse_mrz function needs line 2 to parse successfully
-                        if line2 and len(line2) >= 30:
-                            # Pad line 1 if available to create proper MRZ context
-                            if line1:
-                                # Try parsing line 2 with line 1 context for names
-                                combined = line1 + line2
-                                mrz_candidates.insert(0, combined)  # Prioritize combined
-                                logger.info(f"Combined MRZ attempt: {combined[:88]}")
+                mrz_candidates = reconstruct_mrz_smart(lines)
                 
                 if not mrz_candidates:
-                    return {"error": "No valid MRZ found in OCR text", "ocr_text": ocr_text[:200]}
+                    logger.warning("No MRZ candidates found, falling back to LLM extraction...")
+                    llm_result = extract_passport_with_llm(ocr_text)
+                    return llm_result
                 
-                # Try to parse MRZ candidates
-                for mrz_line in mrz_candidates:
+                # Try to parse each MRZ candidate
+                logger.info(f"Trying to parse {len(mrz_candidates)} MRZ candidates...")
+                successful_parses = []
+                
+                for i, mrz_line in enumerate(mrz_candidates):
+                    logger.info(f"Attempting candidate {i+1}/{len(mrz_candidates)}: {mrz_line[:60]}...")
                     parsed = parse_mrz(mrz_line)
-                    if "error" not in parsed:
-                        parsed["extraction_method"] = "OCR_MRZ"
-                        
+                    
+                    if "error" not in parsed and parsed.get('passport_number'):
                         # Validate with Pydantic
                         try:
                             validated = PassportData(**parsed)
-                            logger.info("✓ Pydantic validation successful for OCR extraction")
-                            logger.info(f"✓ Extracted: {validated.full_name}, Passport: {validated.passport_number}")
-                            return validated.model_dump(by_alias=False, exclude_none=True)
+                            parsed['extraction_method'] = 'OCR_MRZ'
+                            successful_parses.append(parsed)
+                            logger.info(f"✓ Candidate {i+1} parsed successfully: {parsed.get('full_name', 'N/A')} - {parsed.get('passport_number')}")
                         except Exception as validation_error:
-                            logger.warning(f"Pydantic validation warning: {validation_error}")
-                            # Return raw data if validation fails
-                            return parsed
+                            logger.warning(f"Candidate {i+1} Pydantic validation failed: {validation_error}")
+                            # Still keep it if it has passport number
+                            if parsed.get('passport_number'):
+                                parsed['extraction_method'] = 'OCR_MRZ'
+                                successful_parses.append(parsed)
+                                logger.info(f"✓ Candidate {i+1} kept (unvalidated): {parsed.get('full_name', 'N/A')}")
+                    else:
+                        logger.warning(f"Candidate {i+1} parse error: {parsed.get('error', 'Unknown')}")
                 
-                # If MRZ parsing failed, try LLM extraction as last resort
-                logger.info("MRZ parsing failed, attempting LLM extraction from OCR text...")
-                llm_extracted = extract_passport_with_llm(ocr_text)
-                if llm_extracted and "error" not in llm_extracted:
-                    logger.info("✓ LLM extraction successful")
-                    return llm_extracted
+                # If we have successful MRZ parses, select the best one
+                mrz_result = None
+                if successful_parses:
+                    if len(successful_parses) == 1:
+                        mrz_result = successful_parses[0]
+                        logger.info("✓ Single successful MRZ parse")
+                    else:
+                        # Score each result based on completeness
+                        def score_parse(p):
+                            score = 0
+                            # Prefer longer given names (more complete)
+                            score += len(p.get('given_names', '')) * 2
+                            # Prefer results with more fields filled
+                            score += sum(1 for v in p.values() if v and v != '')
+                            # Prefer results with proper nationality (3 letters, all alpha)
+                            nat = p.get('nationality', '')
+                            if len(nat) == 3 and nat.isalpha():
+                                score += 10
+                            return score
+                        
+                        mrz_result = max(successful_parses, key=score_parse)
+                        logger.info(f"✓ Selected best of {len(successful_parses)} MRZ parses: {mrz_result.get('full_name', 'N/A')}")
                 
-                return {"error": "Could not parse MRZ from OCR text", "mrz_candidates": mrz_candidates[:3], "ocr_text": ocr_text[:200]}
+                # ALWAYS try LLM extraction in parallel for comparison
+                logger.info("Running LLM extraction in parallel for comparison...")
+                llm_result = extract_passport_with_llm(ocr_text)
+                
+                # If we have both MRZ and LLM results, merge the best fields
+                if mrz_result and llm_result and "error" not in llm_result:
+                    logger.info("✓ Both MRZ and LLM extraction succeeded, merging best fields...")
+                    
+                    merged_result = {}
+                    
+                    # For each field, pick the better value
+                    def is_better(new_val, old_val, field_name):
+                        """Determine if new value is better than old value"""
+                        if not new_val or new_val == '':
+                            return False
+                        if not old_val or old_val == '':
+                            return True
+                        
+                        # For names, prefer longer/more complete
+                        if field_name in ['full_name', 'given_names', 'surname']:
+                            return len(str(new_val)) > len(str(old_val))
+                        
+                        # For nationality, prefer valid 3-letter codes
+                        if field_name in ['nationality', 'country_code']:
+                            if len(str(new_val)) == 3 and str(new_val).isalpha():
+                                return True
+                            return False
+                        
+                        # For structured fields (dates, passport number), prefer MRZ (more reliable)
+                        if field_name in ['passport_number', 'birth_date', 'expiry_date', 'issued_date']:
+                            # MRZ is more reliable for these, so only replace if LLM has it and MRZ doesn't
+                            return False
+                        
+                        # For other fields, prefer non-empty
+                        return True
+                    
+                    # Start with MRZ result as base (more reliable for structured data)
+                    merged_result = mrz_result.copy()
+                    
+                    # Merge in LLM fields where they're better
+                    for field in ['full_name', 'given_names', 'surname', 'nationality', 'country_code', 
+                                  'gender', 'passport_type', 'birth_date', 'expiry_date', 'passport_number']:
+                        llm_val = llm_result.get(field)
+                        mrz_val = mrz_result.get(field)
+                        
+                        if is_better(llm_val, mrz_val, field):
+                            merged_result[field] = llm_val
+                            logger.info(f"  → Using LLM for {field}: '{llm_val}' (vs MRZ: '{mrz_val}')")
+                        else:
+                            logger.info(f"  → Using MRZ for {field}: '{mrz_val}'")
+                    
+                    merged_result['extraction_method'] = 'OCR_MRZ_LLM_hybrid'
+                    
+                    # Final Pydantic validation on merged result
+                    try:
+                        validated = PassportData(**merged_result)
+                        logger.info("✓ Final Pydantic validation successful for hybrid extraction")
+                        logger.info(f"✓ FINAL: {validated.full_name}, Passport: {validated.passport_number}")
+                        return validated.model_dump(by_alias=False, exclude_none=True)
+                    except Exception as validation_error:
+                        logger.warning(f"Hybrid validation warning: {validation_error}")
+                        return merged_result
+                
+                # If only MRZ succeeded
+                elif mrz_result:
+                    logger.info("✓ Using MRZ result (LLM extraction failed or not available)")
+                    try:
+                        validated = PassportData(**mrz_result)
+                        logger.info("✓ Final Pydantic validation successful for OCR extraction")
+                        logger.info(f"✓ Extracted: {validated.full_name}, Passport: {validated.passport_number}")
+                        return validated.model_dump(by_alias=False, exclude_none=True)
+                    except Exception as validation_error:
+                        logger.warning(f"Final Pydantic validation warning: {validation_error}")
+                        return mrz_result
+                
+                # If only LLM succeeded
+                elif llm_result and "error" not in llm_result:
+                    logger.info("✓ Using LLM result (MRZ parsing failed)")
+                    return llm_result
+                
+                # Complete failure - no successful extraction
+                logger.error("All extraction methods failed")
+                return {
+                    "error": "Could not extract passport data via MRZ or LLM", 
+                    "ocr_text": ocr_text[:200],
+                    "mrz_candidates_tried": len(mrz_candidates),
+                    "mrz_successful_parses": len(successful_parses),
+                    "llm_attempted": True
+                }
                 
             except Exception as ocr_error:
                 logger.error(f"OCR fallback failed: {ocr_error}")
-                traceback.print_exc()
+                logger.error(traceback.format_exc())
                 return {"error": f"No MRZ detected and OCR failed: {str(ocr_error)}"}
        
+        # Process barcodes
         for barcode in barcodes:
             try:
                 text = barcode.text
-                print('hola text', text)
+                logger.info(f"Processing barcode: {text[:60]}...")
                 parsed = parse_mrz(text)
-                print('hola parsed', parsed)
+                
                 if "error" not in parsed:
                     # Validate with Pydantic
                     try:
@@ -414,11 +701,13 @@ def process_passport_file_json(file_path: str) -> dict:
                         return validated.model_dump(by_alias=False, exclude_none=True)
                     except Exception as validation_error:
                         logger.warning(f"Pydantic validation warning: {validation_error}")
-                        # Return raw data if validation fails
-                        return parsed
+                        # Return raw data if validation fails but has passport number
+                        if parsed.get('passport_number'):
+                            return parsed
             except Exception as e:
                 logger.error(f"Error parsing barcode: {e}")
                 continue
+                
         return {"error": "Could not parse MRZ data from detected barcodes"}
        
     except Exception as e:
