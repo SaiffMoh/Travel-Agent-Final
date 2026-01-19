@@ -9,6 +9,10 @@ import logging
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import tempfile
+from Utils.ocr_engine import ocr_passport
+import io
+from PIL import Image
+from Models.PassportModels import PassportData
  
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -75,6 +79,87 @@ def format_date(s: str) -> str:
     return f"{year:04d}-{mm:02d}-{dd:02d}"
  
  
+def extract_passport_with_llm(ocr_text: str) -> dict:
+    """
+    Extract passport information using LLM when MRZ parsing fails.
+    Falls back to manual text extraction from OCR output.
+    
+    Args:
+        ocr_text: Raw OCR extracted text from passport image
+        
+    Returns:
+        Dictionary with extracted passport fields or error
+    """
+    try:
+        from Utils.getLLM import get_llm
+        
+        llm = get_llm()
+        
+        prompt = f"""Extract passport information from the following OCR text. Return ONLY a valid JSON object.
+
+OCR Text:
+{ocr_text}
+
+Extract these fields:
+- full_name: Full name of passport holder
+- surname: Last name/family name
+- given_names: First and middle names
+- passport_number: Passport number (usually starts with a letter followed by 7-9 digits)
+- nationality: 3-letter country code (e.g., EGY, USA, GBR)
+- country_code: Same as nationality
+- gender: M or F
+- birth_date: Date of birth in YYYY-MM-DD format
+- expiry_date: Passport expiry date in YYYY-MM-DD format
+- passport_type: Usually 'P' for regular passport
+
+RETURN ONLY THIS JSON (no markdown, no explanation):
+{{
+  "full_name": "",
+  "surname": "",
+  "given_names": "",
+  "passport_number": "",
+  "nationality": "",
+  "country_code": "",
+  "gender": "",
+  "birth_date": "",
+  "expiry_date": "",
+  "passport_type": ""
+}}"""
+        
+        response = llm.invoke(prompt)
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Clean markdown code blocks if present
+        response_text = response_text.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]
+        if response_text.startswith('```'):
+            response_text = response_text[3:]
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        # Parse JSON
+        import json
+        extracted = json.loads(response_text)
+        
+        # Add metadata
+        extracted['extraction_method'] = 'LLM_fallback'
+        
+        # Validate with Pydantic
+        try:
+            validated = PassportData(**extracted)
+            logger.info(f"✓ LLM extracted and validated: {validated.full_name}, Passport: {validated.passport_number}")
+            return validated.model_dump(by_alias=False, exclude_none=True)
+        except Exception as validation_error:
+            logger.warning(f"LLM extraction validation warning: {validation_error}")
+            return extracted
+        
+    except Exception as e:
+        logger.error(f"LLM extraction failed: {e}")
+        return {"error": f"LLM extraction failed: {str(e)}"}
+
+
 def parse_mrz(mrz_line: str) -> dict:
     """Parse MRZ line and extract passport information"""
     try:
@@ -198,7 +283,121 @@ def process_passport_file_json(file_path: str) -> dict:
         barcodes = zxingcpp.read_barcodes(passport)
        
         if not barcodes:
-            return {"error": "No MRZ barcode detected in passport image"}
+            logger.warning("No MRZ barcode detected, attempting OCR fallback...")
+            
+            # Convert numpy array to bytes for OCR
+            try:
+                # Convert BGR to RGB for PIL
+                passport_rgb = cv2.cvtColor(passport, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(passport_rgb)
+                
+                # Convert to bytes
+                img_byte_arr = io.BytesIO()
+                pil_image.save(img_byte_arr, format='PNG')
+                image_bytes = img_byte_arr.getvalue()
+                
+                # Use OCR to extract text
+                ocr_text = ocr_passport(image_bytes)
+                
+                if not ocr_text or len(ocr_text) < 20:
+                    return {"error": "No MRZ barcode detected and OCR extraction failed"}
+                
+                # Try to find MRZ lines in OCR text
+                lines = ocr_text.split('\n')
+                mrz_candidates = []
+                
+                # Strategy 1: Find complete MRZ lines (40+ chars with <)
+                for line in lines:
+                    line = line.strip().upper()
+                    # MRZ lines are typically 44 chars and contain P< or V<
+                    if len(line) >= 30 and ('P<' in line or '<<' in line or line.count('<') > 3):
+                        # Clean the line
+                        cleaned = re.sub(r'[^A-Z0-9<]', '', line)
+                        if len(cleaned) >= 30:
+                            mrz_candidates.append(cleaned)
+                
+                # Strategy 2: Reconstruct fragmented MRZ (if no complete lines found)
+                if not mrz_candidates:
+                    logger.info("No complete MRZ found, attempting to reconstruct from fragments...")
+                    
+                    # Find fragments that look like MRZ parts
+                    fragments = []
+                    for line in lines:
+                        line_clean = line.strip().upper()
+                        line_clean = re.sub(r'[^A-Z0-9<]', '', line_clean)
+                        
+                        # MRZ fragments: start with P<, contain passport numbers, or have many <
+                        if (line_clean.startswith('P<') or 
+                            re.search(r'[A-Z]\d{7,9}', line_clean) or  # Passport number pattern
+                            line_clean.count('<') >= 2):
+                            fragments.append(line_clean)
+                    
+                    # Try to reconstruct MRZ lines by separating line 1 and line 2
+                    if len(fragments) >= 1:
+                        # Strategy: Line 1 starts with P<, Line 2 starts with passport number
+                        line1 = None
+                        line2 = None
+                        
+                        for frag in fragments:
+                            # Line 1: starts with P< (names section)
+                            if frag.startswith('P<') and not line1:
+                                line1 = frag
+                            # Line 2: starts with passport number pattern (letter + digits)
+                            elif re.match(r'^[A-Z]\d{7,9}', frag) and not line2:
+                                line2 = frag
+                        
+                        # Add the separated lines as candidates
+                        if line1 and len(line1) >= 30:
+                            mrz_candidates.append(line1)
+                            logger.info(f"Found MRZ Line 1: {line1}")
+                        
+                        if line2 and len(line2) >= 30:
+                            mrz_candidates.append(line2)
+                            logger.info(f"Found MRZ Line 2: {line2}")
+                        
+                        # Try combining line 1 and line 2 as separate MRZ lines
+                        # The parse_mrz function needs line 2 to parse successfully
+                        if line2 and len(line2) >= 30:
+                            # Pad line 1 if available to create proper MRZ context
+                            if line1:
+                                # Try parsing line 2 with line 1 context for names
+                                combined = line1 + line2
+                                mrz_candidates.insert(0, combined)  # Prioritize combined
+                                logger.info(f"Combined MRZ attempt: {combined[:88]}")
+                
+                if not mrz_candidates:
+                    return {"error": "No valid MRZ found in OCR text", "ocr_text": ocr_text[:200]}
+                
+                # Try to parse MRZ candidates
+                for mrz_line in mrz_candidates:
+                    parsed = parse_mrz(mrz_line)
+                    if "error" not in parsed:
+                        parsed["extraction_method"] = "OCR_MRZ"
+                        
+                        # Validate with Pydantic
+                        try:
+                            validated = PassportData(**parsed)
+                            logger.info("✓ Pydantic validation successful for OCR extraction")
+                            logger.info(f"✓ Extracted: {validated.full_name}, Passport: {validated.passport_number}")
+                            return validated.model_dump(by_alias=False, exclude_none=True)
+                        except Exception as validation_error:
+                            logger.warning(f"Pydantic validation warning: {validation_error}")
+                            # Return raw data if validation fails
+                            return parsed
+                
+                # If MRZ parsing failed, try LLM extraction as last resort
+                logger.info("MRZ parsing failed, attempting LLM extraction from OCR text...")
+                llm_extracted = extract_passport_with_llm(ocr_text)
+                if llm_extracted and "error" not in llm_extracted:
+                    logger.info("✓ LLM extraction successful")
+                    return llm_extracted
+                
+                return {"error": "Could not parse MRZ from OCR text", "mrz_candidates": mrz_candidates[:3], "ocr_text": ocr_text[:200]}
+                
+            except Exception as ocr_error:
+                logger.error(f"OCR fallback failed: {ocr_error}")
+                traceback.print_exc()
+                return {"error": f"No MRZ detected and OCR failed: {str(ocr_error)}"}
        
         for barcode in barcodes:
             try:
@@ -207,8 +406,16 @@ def process_passport_file_json(file_path: str) -> dict:
                 parsed = parse_mrz(text)
                 print('hola parsed', parsed)
                 if "error" not in parsed:
-                    # Return the full parsed MRZ dictionary for DB and frontend
-                    return parsed
+                    # Validate with Pydantic
+                    try:
+                        parsed['extraction_method'] = 'MRZ_barcode'
+                        validated = PassportData(**parsed)
+                        logger.info("✓ Pydantic validation successful for MRZ barcode extraction")
+                        return validated.model_dump(by_alias=False, exclude_none=True)
+                    except Exception as validation_error:
+                        logger.warning(f"Pydantic validation warning: {validation_error}")
+                        # Return raw data if validation fails
+                        return parsed
             except Exception as e:
                 logger.error(f"Error parsing barcode: {e}")
                 continue

@@ -1,15 +1,117 @@
 import json
 import os
 import re
+import base64
+import io
+import traceback
 from typing import Dict, List
+
 import pdfplumber
+import fitz  # PyMuPDF for PDF to image conversion
+from pathlib import Path
+from dotenv import load_dotenv
 from Models.TravelSearchState import TravelSearchState
+from Models.InvoiceModels import InvoiceData, FlightDetail
 from Utils.watson_config import llm
+from Utils.ocr_engine import ocr_invoice
 import logging
+
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Configuration
+ENV_MODE = os.getenv("env", "dev").lower()  # "dev" or "prod"
+MIN_TEXT_THRESHOLD = 200  # Minimum characters to consider text extraction successful
+# OCR is now handled by Utils/ocr_engine.py
+
+
+def pdf_to_images(pdf_path: str) -> List[bytes]:
+    """
+    Convert PDF pages to PNG images using PyMuPDF.
+    Returns list of image bytes for each page.
+    """
+    images = []
+    try:
+        pdf_document = fitz.open(pdf_path)
+        logger.info(f"Converting {len(pdf_document)} pages to images from {pdf_path}")
+        
+        for page_num in range(len(pdf_document)):
+            page = pdf_document[page_num]
+            # Render page to pixmap (image) at 300 DPI for better OCR
+            pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+            img_bytes = pix.pil_tobytes(format="PNG")
+            images.append(img_bytes)
+            logger.info(f"Converted page {page_num + 1}/{len(pdf_document)}")
+        
+        pdf_document.close()
+        return images
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images: {e}")
+        return []
+
+
+# OCR functions moved to Utils/ocr_engine.py
+
+
+def extract_text_with_ocr_fallback(pdf_path: str) -> str:
+    """
+    Extract text from PDF with OCR fallback if pdfplumber extraction is insufficient.
+    
+    Strategy:
+    1. Try pdfplumber first
+    2. If text < MIN_TEXT_THRESHOLD, convert PDF to images
+    3. Run OCR on all pages (HuggingFace PaddleOCR for dev, VLMM for prod)
+    4. Combine all OCR results
+    """
+    # Step 1: Try standard text extraction
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        logger.info(f"pdfplumber extracted {len(text)} characters from {pdf_path}")
+    except Exception as e:
+        logger.warning(f"pdfplumber extraction failed: {e}")
+        text = ""
+    
+    # Step 2: Check if we need OCR fallback
+    if len(text) >= MIN_TEXT_THRESHOLD:
+        logger.info(f"Text extraction sufficient ({len(text)} chars >= {MIN_TEXT_THRESHOLD})")
+        return text
+    
+    logger.warning(f"Insufficient text extracted ({len(text)} chars < {MIN_TEXT_THRESHOLD}). Falling back to OCR.")
+    
+    # Step 3: Convert PDF to images
+    images = pdf_to_images(pdf_path)
+    if not images:
+        logger.error("Failed to convert PDF to images for OCR")
+        return text  # Return whatever we got from pdfplumber
+    
+    # Step 4: Run OCR on all pages using centralized OCR utility
+    ocr_texts = []
+    
+    try:
+        for i, img_bytes in enumerate(images):
+            logger.info(f"OCR processing page {i + 1}/{len(images)}")
+            page_text = ocr_invoice(img_bytes)
+            if page_text:
+                ocr_texts.append(f"--- Page {i + 1} ---\n{page_text}")
+    except Exception as e:
+        logger.error(f"OCR failed: {e}")
+        if ENV_MODE == "prod":
+            raise  # Fail completely in prod
+    
+    # Step 5: Combine all OCR results
+    combined_ocr = "\n\n".join(ocr_texts)
+    
+    if not combined_ocr or len(combined_ocr) < MIN_TEXT_THRESHOLD:
+        logger.warning(f"OCR extraction also insufficient ({len(combined_ocr)} chars)")
+        return text if len(text) > len(combined_ocr) else combined_ocr
+    
+    logger.info(f"OCR extraction successful: {len(combined_ocr)} characters from {len(images)} pages")
+    return combined_ocr
+
 
 def clean_json_response(response: str) -> str:
     """Clean the LLM response to extract valid JSON."""
@@ -201,10 +303,15 @@ def invoice_extraction_node(state: TravelSearchState) -> TravelSearchState:
         return state
 
     try:
-        # Extract text from PDF
-        with pdfplumber.open(pdf_path) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-        logger.info(f"Extracted text from {pdf_path}: {text[:500]}...")
+        # Extract text from PDF with OCR fallback
+        logger.info(f"Starting text extraction from {pdf_path}")
+        text = extract_text_with_ocr_fallback(pdf_path)
+        
+        if not text or len(text) < 50:
+            logger.error(f"Insufficient text extracted even after OCR: {len(text)} characters")
+            raise ValueError("Could not extract meaningful text from PDF")
+        
+        logger.info(f"Final extracted text: {len(text)} characters. First 500: {text[:500]}...")
 
         # Enhanced prompt for better extraction
         prompt = f"""<|SYSTEM|>You are an expert document parser specialized in flight and travel invoices.
@@ -264,25 +371,33 @@ OCR TEXT:
         logger.info(f"Cleaned JSON response: {cleaned_reply}")
 
         try:
-            invoice_data = json.loads(cleaned_reply)
+            raw_invoice_data = json.loads(cleaned_reply)
             
-            if not isinstance(invoice_data, dict):
+            if not isinstance(raw_invoice_data, dict):
                 raise ValueError("Response is not a JSON object")
 
-            # Deduplicate and clean flight details
-            if invoice_data.get("flight_details"):
-                invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
+            # Validate and clean using Pydantic model
+            try:
+                validated_invoice = InvoiceData(**raw_invoice_data)
+                invoice_data = validated_invoice.model_dump(exclude_none=False)
+                logger.info(f"Successfully validated invoice data with Pydantic")
+            except Exception as validation_error:
+                logger.warning(f"Pydantic validation failed: {validation_error}. Using raw data with manual cleanup.")
+                invoice_data = raw_invoice_data
+                
+                # Manual cleanup as fallback
+                if invoice_data.get("flight_details"):
+                    invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
                 
                 # Only recalculate total amount if individual flight totals exist
-                # Otherwise, keep the invoice-level total_amount from LLM extraction
                 try:
                     flight_totals = [
                         float(str(flight["total_amount"]).replace(',', '')) 
-                        for flight in invoice_data["flight_details"] 
+                        for flight in invoice_data.get("flight_details", [])
                         if flight.get("total_amount") is not None
                     ]
                     
-                    if flight_totals:  # Only recalculate if we have valid flight totals
+                    if flight_totals:
                         total = sum(flight_totals)
                         invoice_data["total_amount"] = f"{total:.2f}"
                         logger.info(f"Recalculated total from flight details: {total:.2f}")
@@ -318,23 +433,32 @@ OCR TEXT:
                 if match:
                     final_attempt = match.group(0)
                     final_attempt = re.sub(r'\}.*$', '}', final_attempt, flags=re.DOTALL)
-                    invoice_data = json.loads(final_attempt)
+                    raw_invoice_data = json.loads(final_attempt)
                     
-                    # Process successfully parsed data
-                    if invoice_data.get("flight_details"):
-                        invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
-                        try:
-                            flight_totals = [
-                                float(str(flight["total_amount"]).replace(',', '')) 
-                                for flight in invoice_data["flight_details"] 
-                                if flight.get("total_amount") is not None
-                            ]
-                            
-                            if flight_totals:  # Only recalculate if we have valid flight totals
-                                total = sum(flight_totals)
-                                invoice_data["total_amount"] = f"{total:.2f}"
-                        except (ValueError, TypeError):
-                            pass
+                    # Validate with Pydantic
+                    try:
+                        validated_invoice = InvoiceData(**raw_invoice_data)
+                        invoice_data = validated_invoice.model_dump(exclude_none=False)
+                        logger.info(f"Successfully validated recovered invoice data with Pydantic")
+                    except Exception as validation_error:
+                        logger.warning(f"Pydantic validation failed on recovered data: {validation_error}")
+                        invoice_data = raw_invoice_data
+                        
+                        # Manual cleanup as fallback
+                        if invoice_data.get("flight_details"):
+                            invoice_data["flight_details"] = deduplicate_flight_entries(invoice_data["flight_details"])
+                            try:
+                                flight_totals = [
+                                    float(str(flight["total_amount"]).replace(',', '')) 
+                                    for flight in invoice_data["flight_details"] 
+                                    if flight.get("total_amount") is not None
+                                ]
+                                
+                                if flight_totals:
+                                    total = sum(flight_totals)
+                                    invoice_data["total_amount"] = f"{total:.2f}"
+                            except (ValueError, TypeError):
+                                pass
                     
                     # Save and generate HTML
                     json_dir = os.path.join("data", "uploads", "json_outputs")

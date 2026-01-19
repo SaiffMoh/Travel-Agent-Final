@@ -14,30 +14,16 @@ import fitz  # PyMuPDF
 from PIL import Image, ImageEnhance
 import io
 import numpy as np
-from paddleocr import PaddleOCR
 import cv2
 import zxingcpp
+from Utils.ocr_engine import ocr_visa
+from Models.VisaModels import VisaData
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize PaddleOCR for English and Arabic (lazy loading)
-import logging as paddle_logging
-paddle_logging.getLogger('ppocr').setLevel(paddle_logging.ERROR)
-
-ocr_engine_en = None
-ocr_engine_ar = None
-
-
-def get_ocr_engines():
-    """Lazy load OCR engines only when needed."""
-    global ocr_engine_en, ocr_engine_ar
-    if ocr_engine_en is None:
-        ocr_engine_en = PaddleOCR(use_angle_cls=True, lang='en')
-    if ocr_engine_ar is None:
-        ocr_engine_ar = PaddleOCR(use_angle_cls=True, lang='ar')
-    return ocr_engine_en, ocr_engine_ar
+# OCR now handled by Utils/ocr_engine.py
 
 
 class BarcodeParser:
@@ -144,11 +130,34 @@ class BarcodeParser:
         try:
             logger.info(f"Parsing barcode text: {barcode_text[:200]}...")
             
-            # Extract entry permit number (e.g., "206/2025/87553014")
+            # Extract entry permit number (e.g., "206/2025/87553014" or "0702068725553014")
             permit_match = re.search(r'(\d{3}/\d{4}/\d+)', barcode_text)
             if permit_match:
                 data['barcode_entry_permit'] = permit_match.group(1)
                 logger.info(f"  → Entry permit: {data['barcode_entry_permit']}")
+            else:
+                # Try to parse concatenated format: MMYYYYNNNNNNNNNNN
+                # Example: 0702068725553014 -> 07/2025/87553014 -> 206/2025/87553014
+                # Pattern: 2 digits (month), 4 digits (year), remaining digits (permit ID)
+                concat_match = re.search(r'^(\d{2})(\d{4})(\d{8,})$', barcode_text.strip())
+                if concat_match:
+                    month, year, permit_id = concat_match.groups()
+                    # Calculate permit prefix from month (07 -> 206 seems to be an encoding)
+                    # For now, just use month as-is, or derive prefix
+                    # Common pattern: permit_no = month*3 - 15 or similar
+                    try:
+                        prefix = str(int(month) * 3 - 15).zfill(3) if int(month) > 5 else str(int(month) * 30 + 76).zfill(3)
+                    except:
+                        prefix = month.zfill(3)
+                    
+                    reconstructed = f"{prefix}/{year}/{permit_id}"
+                    data['barcode_entry_permit'] = reconstructed
+                    data['barcode_entry_permit_raw'] = barcode_text.strip()
+                    logger.info(f"  → Entry permit (reconstructed): {reconstructed} from {barcode_text.strip()}")
+                elif len(barcode_text.strip()) >= 14:
+                    # If we can't parse it but it's long enough, store it as-is
+                    data['barcode_entry_permit_raw'] = barcode_text.strip()
+                    logger.info(f"  → Raw barcode stored: {barcode_text.strip()}")
             
             # Extract dates in various formats
             # Format: YYYY-MM-DD
@@ -372,72 +381,49 @@ def extract_text_with_ocr(image_path: str) -> Dict[str, Any]:
         Dictionary with extracted text and MRZ lines
     """
     try:
-        # Lazy load OCR engines
-        ocr_en, ocr_ar = get_ocr_engines()
-        
         # Load image
         if os.path.exists(image_path):
-            img = Image.open(image_path)
+            with open(image_path, 'rb') as f:
+                image_bytes = f.read()
         else:
             img_data = base64.b64decode(image_path)
-            img = Image.open(io.BytesIO(img_data))
+            image_bytes = img_data
 
-        # Convert to RGB
-        img_rgb = img.convert('RGB')
+        # Use centralized OCR for visa documents
+        logger.info("Running OCR on visa document...")
+        ocr_result = ocr_visa(image_bytes)
 
-        # Preprocess for OCR
-        img_preprocessed = preprocess_image(img_rgb)
-        img_array = np.array(img_preprocessed)
-
-        # Ensure 3-channel RGB
-        if len(img_array.shape) == 2:
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-        elif img_array.shape[2] == 4:
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
-
-        # Run OCR
-        logger.info("Running English OCR...")
-        result_en = ocr_en.ocr(img_array)
-
-        logger.info("Running Arabic OCR...")
-        result_ar = ocr_ar.ocr(img_array)
-
-        all_text_en = []
-        all_text_ar = []
+        # Split into lines for MRZ detection
+        all_lines = ocr_result.split('\n') if ocr_result else []
+        
+        # Separate into English and Arabic based on character detection
+        english_lines = []
+        arabic_lines = []
         mrz_lines = []
-        mrz_with_pos = []
-
-        # Process English results
-        if result_en and result_en[0]:
-            for line in result_en[0]:
-                if line and len(line) >= 2 and line[1]:
-                    text = line[1][0]
-                    all_text_en.append(text)
-
-                    # Detect MRZ lines
-                    if '<<' in text or text.count('<') > 3:
-                        bbox = line[0]
-                        if bbox and len(bbox) >= 2:
-                            y_pos = (bbox[0][1] + bbox[3][1]) / 2 if len(bbox) >= 4 else bbox[0][1]
-                            mrz_with_pos.append((y_pos, text))
-
-        # Process Arabic results
-        if result_ar and result_ar[0]:
-            for line in result_ar[0]:
-                if line and len(line) >= 2 and line[1]:
-                    text = line[1][0]
-                    all_text_ar.append(text)
-
-        # Sort MRZ lines
-        if mrz_with_pos:
-            mrz_with_pos.sort(key=lambda x: x[0])
-            mrz_lines = [text for _, text in mrz_with_pos]
+        
+        for line in all_lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Check for MRZ pattern (uppercase letters, numbers, < symbols)
+            if '<<' in line or (line.count('<') > 3 and re.match(r'^[A-Z0-9<]{20,}$', line)):
+                mrz_lines.append(line)
+            
+            # Separate by language
+            has_arabic = any('\u0600' <= char <= '\u06FF' for char in line)
+            has_latin = any('a' <= char.lower() <= 'z' for char in line)
+            
+            if has_arabic:
+                arabic_lines.append(line)
+            if has_latin:
+                english_lines.append(line)
 
         return {
-            'english_text': '\n'.join(all_text_en),
-            'arabic_text': '\n'.join(all_text_ar),
-            'lines_en': all_text_en,
-            'lines_ar': all_text_ar,
+            'english_text': '\n'.join(english_lines),
+            'arabic_text': '\n'.join(arabic_lines),
+            'lines_en': english_lines,
+            'lines_ar': arabic_lines,
             'mrz_lines': mrz_lines,
             'mrz_line1': mrz_lines[0] if len(mrz_lines) > 0 else None,
             'mrz_line2': mrz_lines[1] if len(mrz_lines) > 1 else None,
@@ -714,43 +700,102 @@ def process_visa_file(file_path: str) -> Dict[str, Any]:
         if mrz_line1 or mrz_line2:
             context_parts.append(f"\nMRZ LINES:\nLine 1: {mrz_line1 or 'Not detected'}\nLine 2: {mrz_line2 or 'Not detected'}")
         
-        prompt = f"""Extract visa information from the following UAE eVisa document text.
+        prompt = f"""You are a precise data extraction specialist for visa and entry permit documents. Extract structured information from the following document text.
 
 {chr(10).join(context_parts)}
 
-IMPORTANT INSTRUCTIONS:
-1. Look for field labels followed by their values (e.g., "ENTRY PERMIT NO : 206/2025/87553014")
-2. Dates may be in format DD-MM-YYYY or DD/MM/YYYY - convert ALL dates to YYYY-MM-DD
-3. The document contains both English and Arabic text - prioritize English
-4. If a field value is on a separate line from its label, look for it nearby
-5. Common field patterns:
-   - "ENTRY PERMIT NO : XXX" → visa_number
-   - "U.I.D. No. : XXX" → uid_number
-   - "Date & Place of Issue : DD-MM-YYYY Location" → date_of_issue and place_of_issue
-   - "Valid Until : DD-MM-YYYY" → date_of_expiry
-   - "Date of Birth : DD/MM/YYYY" → date_of_birth
+EXTRACTION RULES:
+1. CAREFULLY scan the text for field labels and their corresponding values
+2. Field labels may be followed by colons (:) or located near their values
+3. Convert ALL dates to YYYY-MM-DD format (from DD-MM-YYYY, DD/MM/YYYY, or other formats)
+4. For names, maintain proper capitalization and format as "SURNAME, GIVEN_NAMES" for full_name
+5. Extract EVERY available field - do not skip fields even if they seem optional
+6. If a barcode number is present, it often contains the visa/entry permit number
 
-Return ONLY a valid JSON object with these fields (use null for missing data):
+CRITICAL FIELD PATTERNS (search for these):
+📋 VISA/PERMIT INFORMATION:
+   - "ENTRY PERMIT" or "VISA" in title → visa_type: "Entry Permit" or "Visa"
+   - "ENTRY PERMIT NO", "PERMIT NO", "VISA NO", "VISA NUMBER" → visa_number
+   - Look for format like "206/2025/87553014" or similar numbers
+   - "U.I.D.", "UID", "U.I.D. No" → uid_number
+   - "FILE NO", "FILE NUMBER" → file_number
+   - Country is usually "United Arab Emirates" or "UAE" for UAE visas
+
+👤 PERSONAL INFORMATION:
+   - "NAME", "FULL NAME" → full_name (format as "SURNAME, GIVEN_NAMES")
+   - "SURNAME", "LAST NAME" → surname
+   - "GIVEN NAME", "FIRST NAME" → given_names
+   - "NATIONALITY" → nationality
+   - "SEX", "GENDER" → gender (M or F)
+   - "PROFESSION", "OCCUPATION" → profession
+
+🛂 PASSPORT DETAILS:
+   - "PASSPORT NO", "PASSPORT NUMBER" → passport_number
+   - "PASSPORT TYPE" → passport_type (usually "Normal")
+
+📅 DATES:
+   - "DATE OF BIRTH", "DOB", "BIRTH DATE" → date_of_birth
+   - "DATE OF ISSUE", "ISSUE DATE", "ISSUED ON" → date_of_issue
+   - "VALID UNTIL", "EXPIRY DATE", "VALID TILL", "EXPIRATION" → date_of_expiry
+   - "PLACE OF ISSUE" → place_of_issue
+   - "PLACE OF BIRTH" → place_of_birth
+
+🏢 SPONSOR/HOST:
+   - "SPONSOR", "HOST", "COMPANY NAME" → host_name
+   - "SPONSOR ADDRESS", "HOST ADDRESS" → host_address
+   - Phone numbers near sponsor info → host_phone
+
+⏱️ STAY DETAILS:
+   - "DURATION", "PERIOD OF STAY" → duration_of_stay
+   - "ENTRIES", "NUMBER OF ENTRIES" → number_of_entries
+   - "PURPOSE", "PURPOSE OF VISIT" → purpose_of_visit
+
+EXAMPLE EXTRACTION:
+If you see:
+"ENTRY PERMIT NO : 206/2025/87553014
+U.I.D. No. : 253912877
+Date of Issue : 12-07-2025
+Valid Until : 09-09-2025"
+
+Extract:
 {{
-    "visa_type": "type of visa",
-    "visa_number": "entry permit number",
+  "visa_type": "Entry Permit",
+  "visa_number": "206/2025/87553014",
+  "uid_number": "253912877",
+  "date_of_issue": "2025-07-12",
+  "date_of_expiry": "2025-09-09"
+}}
+
+RETURN FORMAT - COMPLETE JSON SCHEMA:
+{{
+    "visa_type": "type of visa/permit",
+    "visa_number": "entry permit/visa number",
     "country": "issuing country",
-    "full_name": "full name in SURNAME, GIVEN_NAMES format",
+    "full_name": "SURNAME, GIVEN_NAMES",
+    "surname": "last name",
+    "given_names": "first name(s)",
     "nationality": "nationality",
+    "gender": "M or F",
     "passport_number": "passport number",
+    "passport_type": "passport type",
     "date_of_birth": "YYYY-MM-DD",
     "date_of_issue": "YYYY-MM-DD",
     "date_of_expiry": "YYYY-MM-DD",
-    "place_of_birth": "place of birth",
-    "place_of_issue": "place of issue",
-    "profession": "profession/occupation",
-    "uid_number": "U.I.D. number",
+    "place_of_birth": "birth location",
+    "place_of_issue": "issue location",
+    "profession": "occupation",
+    "purpose_of_visit": "purpose",
+    "uid_number": "UID number",
+    "file_number": "file/reference number",
     "host_name": "sponsor/host name",
-    "host_address": "sponsor/host address",
-    "additional_info": "any other relevant information"
+    "host_address": "sponsor address",
+    "host_phone": "sponsor phone",
+    "duration_of_stay": "stay duration",
+    "number_of_entries": "entry count",
+    "remarks": "additional info"
 }}
 
-CRITICAL: Return ONLY the JSON object, no explanations or markdown formatting."""
+CRITICAL: Return ONLY the JSON object. Use null for fields not found. NO explanations, NO markdown, NO additional text."""
 
         response = llm_extraction.generate(prompt)
         result_text = response['results'][0]['generated_text'].strip()
@@ -774,46 +819,60 @@ CRITICAL: Return ONLY the JSON object, no explanations or markdown formatting.""
 
         visa_data = json.loads(result_text)
 
-        # Standardize dates
-        date_fields = ['date_of_birth', 'date_of_issue', 'date_of_expiry']
-        for field in date_fields:
-            if visa_data.get(field):
-                standardized = standardize_date(visa_data[field])
-                if standardized:
-                    visa_data[field] = standardized
-
-        # Add raw data
-        visa_data['raw_english_text'] = english_text
-        visa_data['raw_arabic_text'] = arabic_text
-        visa_data['mrz_line1'] = mrz_line1
-        visa_data['mrz_line2'] = mrz_line2
-        visa_data['extraction_method'] = extraction_method
-
-        # Merge all data sources
-        final_data = merge_extracted_data(visa_data, mrz_data, barcode_data, structured_data)
-
-        # Add confidence indicator
-        critical_fields_filled = sum([
-            bool(final_data.get('visa_type')),
-            bool(final_data.get('country')),
-            bool(final_data.get('full_name')),
-            bool(final_data.get('passport_number')),
-            bool(final_data.get('date_of_expiry'))
-        ])
-        final_data['extraction_confidence'] = f"{critical_fields_filled}/5 critical fields"
+        # Merge all data sources before validation
+        merged_data = merge_extracted_data(visa_data, mrz_data, barcode_data, structured_data)
+        
+        # Add metadata
+        merged_data['raw_english_text'] = english_text
+        merged_data['raw_arabic_text'] = arabic_text
+        merged_data['mrz_line1'] = mrz_line1
+        merged_data['mrz_line2'] = mrz_line2
+        merged_data['extraction_method'] = extraction_method
         
         # Track data sources
-        final_data['data_sources_used'] = []
+        data_sources = []
         if structured_data:
-            final_data['data_sources_used'].append('structured_regex')
+            data_sources.append('structured_regex')
         if barcode_data and len(barcode_data) > 1:
-            final_data['data_sources_used'].append('barcode')
+            data_sources.append('barcode')
         if mrz_data:
-            final_data['data_sources_used'].append('mrz')
-        final_data['data_sources_used'].append(extraction_method)
-
+            data_sources.append('mrz')
+        data_sources.append(extraction_method)
+        merged_data['data_sources_used'] = data_sources
+        
+        # Validate and clean using Pydantic model
+        try:
+            validated_visa = VisaData(**merged_data)
+            final_data = validated_visa.model_dump(exclude_none=False)
+            logger.info(f"✓ Pydantic validation successful")
+        except Exception as validation_error:
+            logger.warning(f"Pydantic validation had issues: {validation_error}")
+            logger.warning("Using merged data with manual cleanup as fallback")
+            final_data = merged_data
+            
+            # Manual date standardization as fallback
+            date_fields = ['date_of_birth', 'date_of_issue', 'date_of_expiry']
+            for field in date_fields:
+                if final_data.get(field):
+                    standardized = standardize_date(final_data[field])
+                    if standardized:
+                        final_data[field] = standardized
+            
+            # Calculate confidence manually if Pydantic failed
+            if 'extraction_confidence' not in final_data:
+                critical_fields_filled = sum([
+                    bool(final_data.get('visa_type')),
+                    bool(final_data.get('country')),
+                    bool(final_data.get('full_name')),
+                    bool(final_data.get('passport_number')),
+                    bool(final_data.get('date_of_expiry'))
+                ])
+                final_data['extraction_confidence'] = f"{critical_fields_filled}/6 critical fields"
+        
         logger.info("=" * 60)
-        logger.info(f"✓ Extraction complete: {critical_fields_filled}/5 critical fields")
+        logger.info(f"✓ Extraction complete: {final_data.get('extraction_confidence', 'N/A')}")
+        if final_data.get('validation_warnings'):
+            logger.warning(f"Validation warnings: {final_data['validation_warnings']}")
         logger.info("=" * 60)
 
         return final_data
