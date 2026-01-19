@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 import os, uuid, logging
+from datetime import datetime
 from pathlib import Path
 from Utils.invoice_to_html import invoice_to_html
 from graph import create_travel_graph
@@ -199,6 +200,24 @@ async def process_invoices(
                     db_invoice.id,
                     normalized,
                     status="completed"
+                )
+
+                # Persist conversation state so subsequent messages continue in same thread
+                await crud.save_conversation_state(db, thread_id, {
+                    "invoice_uploaded": True,
+                    "invoice_pdf_path": str(save_path),
+                    "extracted_invoice_data": normalized,
+                    "invoice_html": invoice_html,
+                    "last_action": "invoice_upload",
+                    "last_action_timestamp": datetime.now().isoformat()
+                })
+
+                # CRITICAL: Save message to chat history so the thread persists
+                await crud.create_chat_message(
+                    db,
+                    thread_id=thread_id,
+                    question=f"Uploaded invoice: {file.filename}",
+                    response=invoice_html
                 )
 
                 # Add file header if multiple files
