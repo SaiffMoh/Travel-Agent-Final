@@ -9,7 +9,7 @@ __pycache__/
 test/
 # C extensions
 *.so
-
+data/visa_vector_store
 # Distribution / packaging
 .Python
 build/
