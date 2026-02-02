@@ -32,8 +32,6 @@ async def upload_visas(
     thread = await crud.get_chat_thread(db, thread_id)
     if thread is None:
         thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
-    elif thread.user_id is not None and thread.user_id != current_user.id:
-        return "<div class='error'>Access denied.</div>"
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     html_blocks = []
     for file in files:
@@ -70,22 +68,22 @@ async def upload_visas(
 @router.get("/thread/{thread_id}", response_class=HTMLResponse)
 async def get_visas_for_thread(thread_id: str, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     visas = await crud.get_visas_for_thread(db, thread_id)
-    html = "".join([f"<div>{v.filename} - {v.extraction_status}</div>" for v in visas if v.user_id == current_user.id])
+    html = "".join([f"<div>{v.filename} - {v.extraction_status}</div>" for v in visas])
     return html
 
 @router.get("/{visa_id}", response_class=HTMLResponse)
 async def get_visa(visa_id: int, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     visa = await crud.get_visa(db, visa_id)
-    if not visa or visa.user_id != current_user.id:
-        return "<div class='error'>Not found or access denied.</div>"
+    if not visa:
+        return "<div class='error'>Not found.</div>"
     html = generate_visa_html([visa.extracted_data]) if visa.extracted_data else "<div>No data.</div>"
     return html
 
 @router.delete("/{visa_id}", response_class=HTMLResponse)
 async def delete_visa(visa_id: int, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     visa = await crud.get_visa(db, visa_id)
-    if not visa or visa.user_id != current_user.id:
-        return "<div class='error'>Not found or access denied.</div>"
+    if not visa:
+        return "<div class='error'>Not found.</div>"
     try:
         if os.path.exists(visa.file_path):
             os.remove(visa.file_path)

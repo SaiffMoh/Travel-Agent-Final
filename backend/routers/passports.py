@@ -34,8 +34,6 @@ async def upload_passports(
     thread = await crud.get_chat_thread(db, thread_id)
     if thread is None:
         thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
-    elif thread.user_id is not None and thread.user_id != current_user.id:
-        return "<div class='error'>Access denied.</div>"
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     html_blocks = []
     for file in files:
@@ -89,14 +87,14 @@ async def upload_passports(
 @router.get("/thread/{thread_id}", response_class=HTMLResponse)
 async def get_passports_for_thread(thread_id: str, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     passports = await crud.get_passports_for_thread(db, thread_id)
-    html = "".join([f"<div>{p.filename} - {p.extraction_status}</div>" for p in passports if p.user_id == current_user.id])
+    html = "".join([f"<div>{p.filename} - {p.extraction_status}</div>" for p in passports])
     return html
 
 @router.get("/{passport_id}", response_class=HTMLResponse)
 async def get_passport(passport_id: int, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     passport = await crud.get_passport(db, passport_id)
-    if not passport or passport.user_id != current_user.id:
-        return "<div class='error'>Not found or access denied.</div>"
+    if not passport:
+        return "<div class='error'>Not found.</div>"
     # Defensive: if extracted_data is not normalized, normalize it for display
     data = passport.extracted_data
     if data and 'error' not in data:
@@ -123,8 +121,8 @@ async def get_passport(passport_id: int, db: AsyncSession = Depends(get_db), cur
 @router.delete("/{passport_id}", response_class=HTMLResponse)
 async def delete_passport(passport_id: int, db: AsyncSession = Depends(get_db), current_user = Depends(get_current_active_user)):
     passport = await crud.get_passport(db, passport_id)
-    if not passport or passport.user_id != current_user.id:
-        return "<div class='error'>Not found or access denied.</div>"
+    if not passport:
+        return "<div class='error'>Not found.</div>"
     try:
         if os.path.exists(passport.file_path):
             os.remove(passport.file_path)

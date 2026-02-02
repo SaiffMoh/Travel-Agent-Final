@@ -78,7 +78,7 @@ TRIP TYPE DETECTION (NEW - FOR FLIGHTS/PACKAGES ONLY):
 - NOTE: trip_type only applies to flights and packages, NOT hotels-only requests
 
 DATE PARSING RULES (CRITICAL):
-- If user says "august 20th" or "Aug 20" → convert to "2025-08-20" 
+- If user says "august 20th" or "Aug 20" → convert to "2026-08-20" 
 - If year omitted: use {current_year}, UNLESS month is before {current_month}, then use {current_year + 1}
 - If month and year omitted: use current month/year, UNLESS day is before {current_day}, then next month
 - If next month would be January, increment year too

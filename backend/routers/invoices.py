@@ -200,8 +200,6 @@ async def process_invoices(
     thread = await crud.get_chat_thread(db, thread_id)
     if thread is None:
         thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
-    elif thread.user_id is not None and thread.user_id != current_user.id:
-        return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Access denied.</p></div>'
     
     logger.info(f"📼 INVOICE_UPLOAD | Thread: {thread_id} | User: {current_user.id} | Files: {len(files)}")
     # Ensure upload directory exists
@@ -348,8 +346,6 @@ async def get_invoices_for_thread(
     
     html_blocks = []
     for inv in invoices:
-        if inv.user_id != current_user.id:
-            continue
             
         status_color = {
             'completed': 'green',
@@ -378,8 +374,8 @@ async def get_invoice(
     """Get a specific invoice by ID."""
     invoice = await crud.get_invoice(db, invoice_id)
     
-    if not invoice or invoice.user_id != current_user.id:
-        return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Invoice not found or access denied.</p></div>'
+    if not invoice:
+        return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Invoice not found.</p></div>'
     
     if not invoice.extracted_data:
         return '<div class="p-4 text-muted-foreground">No extracted data available.</div>'
@@ -409,8 +405,8 @@ async def delete_invoice(
     """Delete a specific invoice."""
     invoice = await crud.get_invoice(db, invoice_id)
     
-    if not invoice or invoice.user_id != current_user.id:
-        return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Invoice not found or access denied.</p></div>'
+    if not invoice:
+        return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Invoice not found.</p></div>'
     
     try:
         # Delete file from disk if it exists
