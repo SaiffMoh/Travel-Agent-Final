@@ -29,8 +29,7 @@ from Nodes.summarize_packages import summarize_packages
 from Nodes.toHTML import toHTML
 from Nodes.visa_rag_node import visa_rag_node
 from Nodes.general_conversation_node import general_conversation_node
-from Nodes.invoice_extraction_node import invoice_extraction_node
-from Nodes.booking_node import booking_node  # NEW
+from Nodes.booking_node import booking_node
 
 # Conditionally import nodes based on USE_FALLBACK
 if USE_FALLBACK:
@@ -70,8 +69,7 @@ def create_travel_graph():
     graph.add_node("summarize_packages", summarize_packages)
     graph.add_node("to_html", toHTML)
     graph.add_node("visa_rag", visa_rag_node)
-    graph.add_node("invoice_extraction", invoice_extraction_node)
-    graph.add_node("booking", booking_node)  # NEW
+    graph.add_node("booking", booking_node)
     
     # Add the dynamically selected nodes
     graph.add_node("get_flight_offers", get_flight_offers_node)
@@ -89,8 +87,7 @@ def create_travel_graph():
             "travel_flow": "analyze_conversation",
             "visa_rag": "visa_rag",
             "general_conversation": "general_conversation",
-            "invoice_extraction": "invoice_extraction",
-            "booking": "booking",  # NEW
+            "booking": "booking",
             "need_more_info": END
         }
     )
@@ -98,8 +95,7 @@ def create_travel_graph():
     # End points for non-travel flows
     graph.add_edge("visa_rag", END)
     graph.add_edge("general_conversation", END)
-    graph.add_edge("invoice_extraction", END)
-    graph.add_edge("booking", END)  # NEW - Booking ends here
+    graph.add_edge("booking", END)
     
     # Travel flow (unchanged)
     graph.add_conditional_edges(

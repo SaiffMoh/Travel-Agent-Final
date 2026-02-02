@@ -47,8 +47,6 @@ async def chat_endpoint(
         thread = await crud.get_chat_thread(db, thread_id)
         if thread is None:
             thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
-        elif thread.user_id is not None and thread.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="You do not have access to this thread.")
         previous_state = await crud.get_conversation_state(db, thread_id) or {}
         temp_state = {
             "thread_id": thread_id,
@@ -343,10 +341,6 @@ async def get_thread(
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
     
-    # Check access rights
-    if thread.user_id is not None and thread.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    
     messages = await crud.get_messages_for_thread(db, thread_id)
     
     return schemas.ChatThreadResponse(
@@ -376,8 +370,6 @@ async def save_message_to_thread(
     thread = await crud.get_chat_thread(db, thread_id)
     if not thread:
         thread = await crud.create_chat_thread(db, thread_id, user_id=current_user.id)
-    elif thread.user_id is not None and thread.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
     
     # Create the message
     db_message = await crud.create_chat_message(
@@ -408,9 +400,6 @@ async def get_thread_state(
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
     
-    if thread.user_id is not None and thread.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    
     state = await crud.get_conversation_state(db, thread_id)
     return state or {}
 
@@ -425,9 +414,6 @@ async def delete_thread(
     
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
-    
-    if thread.user_id is not None and thread.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
     
     await db.delete(thread)
     await db.commit()

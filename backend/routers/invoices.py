@@ -2,12 +2,10 @@ from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
-import os, uuid, logging
+import os, uuid, logging, shutil
 from datetime import datetime
 from pathlib import Path
-from Utils.invoice_to_html import invoice_to_html
-from graph import create_travel_graph
-import asyncio, shutil
+from Nodes.invoice_extraction_json import invoice_extraction_json
 from ..database import get_db
 from ..deps import get_current_active_user
 from .. import schemas, crud
@@ -28,7 +26,7 @@ def normalize_invoice_data(data):
     if not isinstance(data, dict):
         return data
     
-    # Top-level field mapping
+    # Top-level field mapping (handles both old and new extraction formats)
     mapping = {
         "invoicenumber": "invoice_number",
         "invoicedate": "issued_date",
@@ -40,9 +38,13 @@ def normalize_invoice_data(data):
         "currency": "currency",
         "travelagency": "travel_agency",
         "flight": "flight_details",
+        "flightdetails": "flight_details",
         "totalamount": "total_amount",
         "srreferencenumber": "invoice_number",
         "cost": "total_amount",
+        "issueddate": "issued_date",
+        "status": "invoice_state",
+        "airlines": "vendor_name",
     }
     
     # Flight field mapping
@@ -89,6 +91,93 @@ def normalize_invoice_data(data):
     return normalized
 
 
+def generate_invoice_html(invoice_data: dict) -> str:
+    """Generate HTML for invoice display matching the old format."""
+    def format_value(value) -> str:
+        if value is None:
+            return "N/A"
+        return str(value).replace("<", "&lt;").replace(">", "&gt;")
+    
+    html = ['<div class="w-full max-w-6xl mx-auto p-4" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">']
+    
+    # Invoice header
+    html.append('<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">')
+    html.append('<h2 class="text-xl font-bold text-blue-800 mb-3">Invoice Details</h2>')
+    html.append('<div class="grid grid-cols-1 md:grid-cols-2 gap-4">')
+    
+    # Basic invoice information
+    basic_fields = [
+        ("Invoice Number", "invoice_number"),
+        ("Issued Date", "issued_date"),
+        ("Submission Date", "submission_date"),
+        ("Vendor Name", "vendor_name"),
+        ("Travel Agency", "travel_agency"),
+        ("Currency", "currency"),
+        ("Total Amount", "total_amount")
+    ]
+    
+    for display_name, key in basic_fields:
+        value = invoice_data.get(key)
+        if value is not None and str(value).strip() != "":
+            html.append(f'<div class="bg-white p-3 rounded border">')
+            html.append(f'<span class="font-semibold text-gray-700">{display_name}:</span>')
+            html.append(f'<span class="ml-2 text-gray-900">{format_value(value)}</span>')
+            html.append('</div>')
+    
+    html.append('</div></div>')
+
+    # Flight details section
+    if invoice_data.get("flight_details"):
+        html.append('<div class="bg-white border border-gray-200 rounded-lg overflow-hidden">')
+        html.append('<div class="bg-gray-50 px-4 py-3 border-b border-gray-200">')
+        html.append('<h3 class="text-lg font-semibold text-gray-800">Flight Details</h3>')
+        html.append('</div>')
+        
+        html.append('<div class="overflow-x-auto" style="overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%;">')
+        html.append('<table class="w-full" style="min-width: 900px;">')
+        html.append('<thead class="bg-gray-100">')
+        html.append('<tr>')
+        
+        flight_headers = [
+            "Airline", "Origin", "Destination", "Departure", "Arrival", 
+            "Passenger", "Ticket #", "Service", "Amount", "Tax", "Total"
+        ]
+        
+        for header in flight_headers:
+            html.append(f'<th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-b border-gray-200">{header}</th>')
+        
+        html.append('</tr></thead><tbody>')
+
+        for i, flight in enumerate(invoice_data["flight_details"]):
+            row_class = "bg-gray-50" if i % 2 else "bg-white"
+            html.append(f'<tr class="{row_class}">')
+            
+            flight_values = [
+                flight.get("airline"),
+                flight.get("origin"),
+                flight.get("destination"),
+                flight.get("departure_date"),
+                flight.get("arrival_date"),
+                flight.get("passenger"),
+                flight.get("ticket_number"),
+                flight.get("service_type"),
+                flight.get("amount"),
+                flight.get("tax"),
+                flight.get("total_amount")
+            ]
+            
+            for value in flight_values:
+                html.append(f'<td class="px-3 py-2 text-sm text-gray-900 border-b border-gray-200">{format_value(value)}</td>')
+            
+            html.append('</tr>')
+        
+        html.append('</tbody></table>')
+        html.append('</div></div>')
+
+    html.append('</div>')
+    return "".join(html)
+
+
 @router.post("/process", response_class=HTMLResponse)
 async def process_invoices(
     files: List[UploadFile] = File(...),
@@ -114,11 +203,9 @@ async def process_invoices(
     elif thread.user_id is not None and thread.user_id != current_user.id:
         return '<div class="p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-600">Access denied.</p></div>'
     
+    logger.info(f"📼 INVOICE_UPLOAD | Thread: {thread_id} | User: {current_user.id} | Files: {len(files)}")
     # Ensure upload directory exists
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    
-    # Compile graph once for this request
-    graph = create_travel_graph().compile()
 
     html_blocks = []
     
@@ -162,38 +249,18 @@ async def process_invoices(
                 file_size=len(content)
             ))
 
-            # Prepare state for graph-driven invoice extraction
-            state = {
-                "thread_id": thread_id,
-                "current_message": f"Processing uploaded invoice: {file.filename}",
-                "user_message": f"Processing uploaded invoice: {file.filename}",
-                "needs_followup": True,
-                "followup_question": None,
-                "current_node": "invoice_extraction",
-                "invoice_uploaded": True,
-                "invoice_pdf_path": str(save_path),
-                "extracted_invoice_data": None,
-                "invoice_html": None
-            }
-
+            # Extract invoice data directly without graph overhead
             try:
-                try:
-                    state["main_event_loop"] = asyncio.get_running_loop()
-                except RuntimeError:
-                    state["main_event_loop"] = None
-
-                # Run graph to extract invoice HTML and data
-                result = await graph.ainvoke(state)
-
-                invoice_html = result.get("invoice_html", f"""
+                # Call extraction function directly
+                extracted_data = invoice_extraction_json(str(save_path), thread_id)
+                
+                # Normalize and generate HTML
+                normalized = normalize_invoice_data(extracted_data) if extracted_data else {}
+                invoice_html = generate_invoice_html(normalized) if normalized else f"""
                 <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                     <p class="text-yellow-600">Invoice '{file.filename}' processed but no data extracted.</p>
                 </div>
-                """)
-
-                # Normalize and persist extracted data
-                extracted = result.get("extracted_invoice_data")
-                normalized = normalize_invoice_data(extracted) if extracted else {}
+                """
 
                 await crud.update_invoice_extraction(
                     db,
@@ -231,19 +298,19 @@ async def process_invoices(
                 else:
                     html_blocks.append(invoice_html)
 
-            except Exception as node_exc:
-                logger.error(f"Graph extraction error for {file.filename}: {node_exc}")
+            except Exception as extraction_exc:
+                logger.error(f"Invoice extraction error for {file.filename}: {extraction_exc}")
                 # Update DB with error state
                 await crud.update_invoice_extraction(
                     db,
                     db_invoice.id,
                     {},
                     status="error",
-                    error=str(node_exc)
+                    error=str(extraction_exc)
                 )
                 html_blocks.append(f"""
                 <div class="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
-                    <p class="text-red-600">Error processing '{file.filename}': {str(node_exc)}</p>
+                    <p class="text-red-600">Error processing '{file.filename}': {str(extraction_exc)}</p>
                 </div>
                 """)
 
@@ -319,7 +386,7 @@ async def get_invoice(
     
     # Normalize before rendering
     normalized = normalize_invoice_data(invoice.extracted_data)
-    html = invoice_to_html(normalized)
+    html = generate_invoice_html(normalized)
     
     # Add filename header
     return (

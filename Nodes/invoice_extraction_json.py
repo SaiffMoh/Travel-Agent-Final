@@ -113,25 +113,31 @@ CRITICAL REQUIREMENTS:
 
 JSON SCHEMA:
 {{
-"SRReferenceNumber":
-"InvoiceDate": 
-"InvoiceNumber": 
-"Status":
-"IsCash":
-"Currency":
-"CurrencyRate":
-"OriginalInvoice":
-"Airlines":
-"Cost":
-"ChangeFees":
-"RefundFees":
-"Flight":
-"Insurance":
-"Transportation":
-"Accommodation":
-"Others":
-"Reviewed":
-
+    "invoice_number": "string or null",
+    "issued_date": "YYYY-MM-DDTHH:MM:SS or null",
+    "submission_date": "YYYY-MM-DDTHH:MM:SS or null",
+    "vendor_type": "travel_agency or null",
+    "vendor_name": "string or null",
+    "subsidiary_name": "string or null",
+    "invoice_state": "string or null",
+    "currency": "string or null",
+    "travel_agency": "string or null",
+    "flight_details": [
+        {{
+            "airline": "string or null",
+            "origin": "string or null",
+            "destination": "string or null",
+            "departure_date": "YYYY-MM-DD or null",
+            "arrival_date": "YYYY-MM-DD or null",
+            "passenger": "string or null",
+            "ticket_number": "string or null",
+            "service_type": "string or null",
+            "amount": "string or null",
+            "tax": "string or null",
+            "total_amount": "string or null"
+        }}
+    ],
+    "total_amount": "string or null"
 }}
 
 OCR TEXT:

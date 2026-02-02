@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import html
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import requests
+import json
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,54 @@ TAVILY_API_KEY=os.getenv("TAVILY_API_KEY")
 TAVILY_URL=os.getenv("TAVILY_URL")
 
 # Initialize OpenAI client for web search
+
+def parse_sse_response(sse_text: str) -> str:
+    """
+    Parse Server-Sent Events (SSE) response and extract content.
+    
+    Args:
+        sse_text: Raw SSE response text
+        
+    Returns:
+        Extracted content string
+    """
+    content_parts = []
+    
+    # Split by event boundaries
+    events = sse_text.strip().split('\n\n')
+    
+    for event in events:
+        if not event.strip():
+            continue
+            
+        # Parse event lines
+        lines = event.strip().split('\n')
+        data_line = None
+        
+        for line in lines:
+            if line.startswith('data: '):
+                data_line = line[6:]  # Remove 'data: ' prefix
+                break
+        
+        if not data_line:
+            continue
+        
+        try:
+            # Parse the JSON data
+            data = json.loads(data_line)
+            
+            # Look for content in choices[0].delta.content
+            if 'choices' in data and len(data['choices']) > 0:
+                delta = data['choices'][0].get('delta', {})
+                if 'content' in delta:
+                    content_parts.append(delta['content'])
+        except json.JSONDecodeError:
+            # Skip malformed JSON
+            continue
+    
+    # Combine all content parts
+    full_content = ''.join(content_parts)
+    return full_content.strip()
 
 def tavily_web_search(query: str) -> str:
     """
@@ -39,17 +88,32 @@ def tavily_web_search(query: str) -> str:
         TAVILY_URL,
         headers=headers,
         json=payload,
-        timeout=30
+        timeout=100
     )
 
-    response.raise_for_status()
-    data = response.json()
+    logger.info(f"Tavily API Status Code: {response.status_code}")
 
-    # Tavily follows OpenAI-style structure
+    response.raise_for_status()
+    
+    # Check if response has content
+    if not response.text or response.text.strip() == "":
+        raise ValueError("Tavily API returned empty response")
+    
+    # Parse SSE response
     try:
-        return data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError):
-        raise ValueError("Invalid Tavily response format")
+        content = parse_sse_response(response.text)
+        
+        if not content:
+            logger.error(f"No content extracted from SSE. Response text (first 1000 chars): {response.text[:1000]}")
+            raise ValueError("Failed to extract content from Tavily SSE response")
+        
+        logger.info(f"Successfully extracted {len(content)} characters from Tavily response")
+        return content
+        
+    except Exception as e:
+        logger.error(f"Failed to parse SSE response: {str(e)}")
+        logger.error(f"Response text (first 1000 chars): {response.text[:1000]}")
+        raise ValueError(f"Tavily API SSE parsing failed: {str(e)}")
 
 def web_search_node(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
@@ -306,9 +370,34 @@ def format_paragraph(para: str) -> str:
         HTML-formatted paragraph
     """
     lines = para.split('\n')
+    first_line = lines[0].strip()
+    
+    # Check if this is a markdown header
+    if first_line.startswith('#'):
+        # Count the number of # symbols
+        hash_count = len(re.match(r'^#+', first_line).group())
+        # Remove # symbols and clean up
+        header_text = first_line.lstrip('#').strip()
+        
+        # Apply inline formatting to header text
+        formatted_header = apply_inline_formatting(header_text)
+        
+        # Map hash count to appropriate heading level and size
+        if hash_count == 1:
+            return f'<h1 style="font-size: 28px; font-weight: 700; margin: 32px 0 16px 0; line-height: 1.3; color: #1a1a1a;">{formatted_header}</h1>'
+        elif hash_count == 2:
+            return f'<h2 style="font-size: 22px; font-weight: 600; margin: 28px 0 14px 0; line-height: 1.3; color: #1a1a1a;">{formatted_header}</h2>'
+        elif hash_count == 3:
+            return f'<h3 style="font-size: 18px; font-weight: 600; margin: 24px 0 12px 0; line-height: 1.3; color: #1a1a1a;">{formatted_header}</h3>'
+        else:
+            return f'<h4 style="font-size: 16px; font-weight: 600; margin: 20px 0 10px 0; line-height: 1.3; color: #1a1a1a;">{formatted_header}</h4>'
+    
+    # Check if this is a horizontal rule
+    if first_line in ['---', '***', '___']:
+        return '<hr style="border: none; border-top: 1px solid #ddd; margin: 24px 0;">'
     
     # Check if this is a numbered list
-    if re.match(r'^\d+[\.\)]\s+', lines[0]):
+    if re.match(r'^\d+[\.\)]\s+', first_line):
         list_items = []
         for line in lines:
             # Remove list markers
@@ -322,7 +411,7 @@ def format_paragraph(para: str) -> str:
         return f'<ol style="list-style: decimal; margin: 0 0 16px 24px; padding: 0;">{"".join(list_items)}</ol>'
     
     # Check if this is a bullet list
-    elif re.match(r'^[•\-\*]\s+', lines[0]):
+    elif re.match(r'^[•\-\*]\s+', first_line):
         list_items = []
         for line in lines:
             # Remove list markers
@@ -443,48 +532,43 @@ def generate_search_result_html(query: str, result: str) -> str:
         """
         <style>
             .search-container {
-                max-width: 800px;
+                max-width: 900px;
                 margin: 0 auto;
-                padding: 20px;
+                padding: 0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
                 line-height: 1.6;
             }
-            .section-header {
-                border-bottom: 2px solid #000;
-                padding-bottom: 12px;
-                margin-bottom: 24px;
-            }
-            .section-title {
-                font-size: 24px;
-                font-weight: 600;
-                margin: 0;
-                letter-spacing: -0.5px;
-            }
-            .section-subtitle {
-                font-size: 14px;
-                margin: 4px 0 0 0;
-                opacity: 0.7;
-            }
             .search-content {
-                border: 1px solid #ddd;
-                padding: 20px;
-                margin-bottom: 16px;
-                background: #fff;
+                padding: 0;
+                background: transparent;
             }
-            .content-section {
-                margin-bottom: 24px;
+            .search-content h1 {
+                font-size: 28px;
+                font-weight: 700;
+                margin: 32px 0 16px 0;
+                line-height: 1.3;
+                color: #1a1a1a;
             }
-            .content-section:last-child {
-                margin-bottom: 0;
-            }
-            .subsection-title {
-                font-size: 12px;
+            .search-content h2 {
+                font-size: 22px;
                 font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin: 0 0 12px 0;
-                padding-bottom: 8px;
-                border-bottom: 1px solid #ddd;
+                margin: 28px 0 14px 0;
+                line-height: 1.3;
+                color: #1a1a1a;
+            }
+            .search-content h3 {
+                font-size: 18px;
+                font-weight: 600;
+                margin: 24px 0 12px 0;
+                line-height: 1.3;
+                color: #1a1a1a;
+            }
+            .search-content h4 {
+                font-size: 16px;
+                font-weight: 600;
+                margin: 20px 0 10px 0;
+                line-height: 1.3;
+                color: #1a1a1a;
             }
             .search-content p {
                 line-height: 1.8;
@@ -501,88 +585,76 @@ def generate_search_result_html(query: str, result: str) -> str:
                 color: #333;
             }
             .search-content a {
-                color: #000;
-                text-decoration: underline;
+                color: #0066cc;
+                text-decoration: none;
                 word-break: break-word;
+            }
+            .search-content a:hover {
+                text-decoration: underline;
+            }
+            .search-content strong {
+                font-weight: 600;
+                color: #1a1a1a;
+            }
+            .search-content em {
+                font-style: italic;
+            }
+            .search-content code {
+                background: #f4f4f4;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 0.9em;
+            }
+            .search-content hr {
+                border: none;
+                border-top: 1px solid #ddd;
+                margin: 24px 0;
             }
             .table-container {
                 overflow-x: auto;
-                margin: 16px 0;
+                margin: 20px 0;
+                border-radius: 6px;
+                border: 1px solid #e0e0e0;
             }
             .data-table {
                 width: 100%;
                 border-collapse: collapse;
-                border: 1px solid #ddd;
+                font-size: 14px;
             }
             .data-table th {
-                background: #fafafa;
-                padding: 12px;
+                background: #f8f9fa;
+                padding: 12px 16px;
                 text-align: left;
                 font-weight: 600;
-                font-size: 12px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                border-bottom: 1px solid #ddd;
+                font-size: 13px;
+                color: #1a1a1a;
+                border-bottom: 2px solid #e0e0e0;
             }
             .data-table td {
-                padding: 12px;
-                border-bottom: 1px solid #eee;
+                padding: 12px 16px;
+                border-bottom: 1px solid #f0f0f0;
                 vertical-align: top;
-                font-size: 14px;
+                color: #333;
             }
             .data-table tr:last-child td {
                 border-bottom: none;
             }
-            .notice-box {
-                border: 1px solid #ddd;
-                padding: 20px;
-                text-align: center;
+            .data-table tr:hover {
                 background: #fafafa;
-                margin-top: 16px;
-            }
-            .notice-box p {
-                margin: 0;
-                font-size: 13px;
-                line-height: 1.6;
             }
         </style>
         """,
         '<div class="search-container">',
-        '<div class="section-header">',
-        '<h1 class="section-title">Web Search Results</h1>',
-        f'<p class="section-subtitle">{html.escape(query)}</p>',
-        '</div>',
         '<div class="search-content">'
     ]
     
     # Process content based on structure
     if structure["paragraphs"]:
-        current_section = None
-        for i, para in enumerate(structure["paragraphs"]):
-            # Check if this is a section header
-            if para in structure["sections"] and len(para) < 100:
-                # Close previous section if exists
-                if current_section is not None:
-                    html_parts.append('</div>')
-                
-                # Start new section
-                clean_header = para.replace('**', '').replace('__', '')
-                html_parts.append('<div class="content-section">')
-                html_parts.append(f'<h2 class="subsection-title">{html.escape(clean_header)}</h2>')
-                current_section = clean_header
-            else:
-                # If no section started yet, start one
-                if current_section is None:
-                    html_parts.append('<div class="content-section">')
-                    current_section = "Results"
-                
-                # Format as paragraph or list
-                formatted = format_paragraph(para)
-                html_parts.append(formatted)
-        
-        # Close last section
-        if current_section is not None:
-            html_parts.append('</div>')
+        for para in structure["paragraphs"]:
+            # Format each paragraph (handles headers, lists, regular text)
+            formatted = format_paragraph(para)
+            html_parts.append(formatted)
     else:
         # Fallback: simple formatting
         formatted_result = apply_inline_formatting(result)
@@ -591,27 +663,16 @@ def generate_search_result_html(query: str, result: str) -> str:
         formatted_result = make_links_clickable(formatted_result)
         html_parts.append(f'<p style="margin: 0 0 16px 0; line-height: 1.8; color: #333;">{formatted_result}</p>')
     
-    # Restore tables
-    if structure["has_tables"]:
-        html_content = ''.join(html_parts)
-        html_content = restore_tables(html_content, structure["tables"])
-        html_parts = [html_content]
-    
     # Close search content
     html_parts.append('</div>')
+    html_parts.append('</div>')
     
-    # Add notice section
-    html_parts.extend([
-        '<div class="notice-box">',
-        '<p>',
-        'I can also help you find flights, hotels, visa requirements, and complete travel packages.<br>',
-        'Just ask me about your travel plans.',
-        '</p>',
-        '</div>',
-        '</div>'
-    ])
+    # Join and restore tables
+    html_content = '\n'.join(html_parts)
+    if structure["has_tables"]:
+        html_content = restore_tables(html_content, structure["tables"])
     
-    return '\n'.join(html_parts)
+    return html_content
 
 
 def generate_error_html(error_message: str) -> str:

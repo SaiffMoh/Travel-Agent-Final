@@ -160,13 +160,15 @@ def smart_router(state: TravelSearchState) -> str:
     1. Booking requests (explicit package selection has HIGHEST priority)
     2. Document upload completion (if in booking flow) - route back to booking
     3. Visa inquiries (can interrupt any flow)
-    4. Invoice extraction
-    5. Travel search (handles hotels-only, one-way, round trip)
-    6. General conversation
+    4. Travel search (handles hotels-only, one-way, round trip)
+    5. General conversation
     
     NOTE: This router only returns routing decisions.
     State modifications (like setting selected_package_id) must happen in main.py
     before graph invocation, as routers cannot modify state in LangGraph.
+    
+    Invoice extraction is now handled directly in the invoices router and does
+    not use the graph routing system.
     """
     
     # FIRST: Check for booking intent (HIGHEST PRIORITY for package selection)
@@ -193,10 +195,6 @@ def smart_router(state: TravelSearchState) -> str:
     # FOURTH: Check primary intent
     intent = detect_user_intent(state)
     print(f"Router: Detected primary intent - {intent}")
-    
-    if intent == "invoice_extraction":
-        print("Router: Routing to invoice_extraction node")
-        return "invoice_extraction"
     
     if intent == "travel_search":
         is_new_search = state.get("is_new_search", False)

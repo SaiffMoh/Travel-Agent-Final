@@ -3,11 +3,12 @@ from Utils.watson_config import llm  # Import Watson LLM instead of OpenAI
 import os
 
 def detect_user_intent(state: TravelSearchState) -> str:
-    """Enhanced intent detection to handle multiple flows seamlessly"""
-    if state.get("invoice_uploaded", False):
-        print("Intent: Invoice upload detected")
-        return "invoice_extraction"
-
+    """
+    Enhanced intent detection to handle multiple flows seamlessly.
+    
+    Note: Invoice uploads are now handled directly through the dedicated
+    /api/v1/invoices/process endpoint and do not use graph routing.
+    """
     user_message = state.get("current_message") or state.get("user_message", "")
     
     if not user_message:
